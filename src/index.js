@@ -22,7 +22,6 @@ app.use((req, res) => {
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    // eslint-disable-next-line no-console
     console.log(`Vetgo API listening on http://localhost:${PORT}`);
   });
 }
