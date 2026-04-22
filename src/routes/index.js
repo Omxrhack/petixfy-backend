@@ -7,9 +7,11 @@ const productsRoutes = require('./products.routes');
 const rewardsRoutes = require('./rewards.routes');
 const triageRoutes = require('./triage.routes');
 const trackingRoutes = require('./tracking.routes');
+const authRoutes = require('./authRoutes');
 
 const router = Router();
 
+router.use('/auth', authRoutes);
 router.use('/pets', requireAuth, petsRoutes);
 router.use('/appointments', requireAuth, appointmentsRoutes);
 router.use('/emergencies', requireAuth, emergenciesRoutes);
