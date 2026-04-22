@@ -6,6 +6,9 @@ const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole'
 const url = process.env.SUPABASE_URL;
 const anonKey = process.env.SUPABASE_ANON_KEY;
 
+/**
+ * La API recibe `client` / `vet`, pero en BD (profiles.role) el rol cliente es `owner`.
+ */
 function mapApiRoleToDbRole(role) {
   return role === 'vet' ? 'vet' : 'owner';
 }
@@ -127,11 +130,15 @@ async function login(req, res) {
 
     let profile = null;
     const userClient = createSupabaseClientWithJwt(data.session.access_token);
-    const { data: profileData } = await userClient
+    const { data: profileData, error: profileError } = await userClient
       .from('profiles')
       .select('id, role, full_name, phone')
       .eq('id', data.user.id)
       .maybeSingle();
+
+    if (profileError) {
+      return res.status(400).json({ error: profileError.message, details: profileError });
+    }
 
     profile = profileData ?? null;
 
