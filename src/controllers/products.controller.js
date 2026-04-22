@@ -11,6 +11,11 @@ function escapeIlikePattern(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+/** Valor en filtros `.or()` / PostgREST cuando incluye `%` u otros caracteres especiales. */
+function quotePostgrestValue(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '""')}"`;
+}
+
 /**
  * Catálogo e-commerce: paginación, búsqueda por nombre/descripción y filtro opcional por categoría.
  * Lectura pública (anon + RLS); no requiere JWT.
@@ -40,7 +45,8 @@ async function listProducts(req, res) {
     if (searchRaw != null && String(searchRaw).trim() !== '') {
       const term = escapeIlikePattern(String(searchRaw).trim());
       const pattern = `%${term}%`;
-      query = query.or(`name.ilike.${pattern},description.ilike.${pattern}`);
+      const q = quotePostgrestValue(pattern);
+      query = query.or(`name.ilike.${q},description.ilike.${q}`);
     }
 
     query = query.range(from, to);

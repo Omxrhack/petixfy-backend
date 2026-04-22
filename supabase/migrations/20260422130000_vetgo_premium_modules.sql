@@ -93,39 +93,10 @@ CREATE POLICY rewards_insert_own_initial
     AND tier = 'bronze'::public.rewards_tier
   );
 
-CREATE POLICY rewards_update_admin
-  ON public.rewards
-  FOR UPDATE
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles pr
-      WHERE pr.id = auth.uid()
-        AND pr.role = 'admin'::public.user_role
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles pr
-      WHERE pr.id = auth.uid()
-        AND pr.role = 'admin'::public.user_role
-    )
-  );
-
-CREATE POLICY rewards_insert_admin
-  ON public.rewards
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles pr
-      WHERE pr.id = auth.uid()
-        AND pr.role = 'admin'::public.user_role
-    )
-  );
+-- NOTE:
+-- Las políticas que dependen de 'admin'::public.user_role se mueven a
+-- una migración posterior para evitar errores de visibilidad del enum
+-- en transacciones de migración.
 
 -- triage: solo mascotas del dueño
 CREATE POLICY triage_logs_select_own_pet
