@@ -3,18 +3,9 @@
 ALTER TABLE public.pets
   ADD COLUMN IF NOT EXISTS photo_url text;
 
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'vetgo-images',
-  'vetgo-images',
-  true,
-  5242880,
-  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
-)
-ON CONFLICT (id) DO UPDATE SET
-  public = EXCLUDED.public,
-  file_size_limit = EXCLUDED.file_size_limit,
-  allowed_mime_types = EXCLUDED.allowed_mime_types;
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('vetgo-images', 'vetgo-images', true)
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
 
 -- Lectura pública de objetos del bucket (URLs públicas / catálogo de imágenes)
 CREATE POLICY vetgo_images_select_public

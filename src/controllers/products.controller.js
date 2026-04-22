@@ -1,25 +1,66 @@
 const { supabaseAnon } = require('../lib/supabaseAnon');
 
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 10;
+const MAX_LIMIT = 50;
+
 /**
- * Catálogo de tienda. Lectura pública (anon + RLS); no requiere JWT.
+ * Escapa comodines de ILIKE para que el término de búsqueda sea literal.
+ */
+function escapeIlikePattern(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
+ * Catálogo e-commerce: paginación, búsqueda por nombre/descripción y filtro opcional por categoría.
+ * Lectura pública (anon + RLS); no requiere JWT.
  */
 async function listProducts(req, res) {
   try {
-    const { category } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || DEFAULT_PAGE);
+    const limit = Math.min(
+      MAX_LIMIT,
+      Math.max(1, parseInt(req.query.limit, 10) || DEFAULT_LIMIT),
+    );
+    const searchRaw = req.query.search;
+    const category = req.query.category;
 
-    let query = supabaseAnon.from('products').select('*').order('name', { ascending: true });
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    let query = supabaseAnon
+      .from('products')
+      .select('*', { count: 'exact', head: false })
+      .order('name', { ascending: true });
 
     if (category != null && String(category).trim() !== '') {
       query = query.eq('category', String(category).trim());
     }
 
-    const { data, error } = await query;
+    if (searchRaw != null && String(searchRaw).trim() !== '') {
+      const term = escapeIlikePattern(String(searchRaw).trim());
+      const pattern = `%${term}%`;
+      query = query.or(`name.ilike.${pattern},description.ilike.${pattern}`);
+    }
+
+    query = query.range(from, to);
+
+    const { data, error, count } = await query;
 
     if (error) {
       return res.status(400).json({ error: error.message, details: error });
     }
 
-    return res.json(data ?? []);
+    const total = count ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return res.json({
+      data: data ?? [],
+      page,
+      limit,
+      total,
+      totalPages,
+    });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to list products', details: err.message });
   }

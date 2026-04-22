@@ -1,9 +1,13 @@
 const { Router } = require('express');
-const { createPet, listPetsByOwner } = require('../controllers/pets.controller');
+const { uploadPetPhotoMiddleware } = require('../middleware/uploadPetPhoto');
+const { validateSchema } = require('../middleware/validateSchema');
+const { createPetSchema } = require('../schemas/pet.schema');
+const { createPet, listPetsByOwner, uploadPetPhoto } = require('../controllers/pets.controller');
 
 const router = Router();
 
-router.post('/', createPet);
+router.post('/:id/upload-photo', uploadPetPhotoMiddleware, uploadPetPhoto);
+router.post('/', validateSchema(createPetSchema), createPet);
 router.get('/:ownerId', listPetsByOwner);
 
 module.exports = router;
