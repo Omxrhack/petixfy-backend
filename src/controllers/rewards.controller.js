@@ -2,8 +2,6 @@
  * Vetgo Rewards: puntos y nivel para dueños.
  */
 
-const TIER_ORDER = ['bronze', 'silver', 'gold'];
-
 function tierFromPoints(points) {
   const p = Number(points) || 0;
   if (p >= 1500) return 'gold';
@@ -74,7 +72,7 @@ async function addRewardsPoints(req, res) {
     const payload = {
       owner_id: ownerId,
       points: nextPoints,
-      tier: TIER_ORDER.includes(nextTier) ? nextTier : 'bronze',
+      tier: nextTier,
     };
 
     const { data, error } = await req.supabase
