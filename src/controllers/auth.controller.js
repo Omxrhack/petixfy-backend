@@ -102,7 +102,7 @@ function isEmailRateLimitError(error) {
 }
 
 const RATE_LIMIT_MESSAGE =
-  'Has pedido demasiados códigos seguidos. Espera unos minutos antes de intentarlo de nuevo o usa el último código que recibiste.';
+  'El servicio de correo del proyecto está saturado momentáneamente y no pudo enviar el código. Esto pasa con cualquier correo, no solo con el tuyo. Intenta de nuevo en unos minutos.';
 
 async function findAuthUserByEmail(email) {
   const serviceClient = createSupabaseServiceRoleClient();
