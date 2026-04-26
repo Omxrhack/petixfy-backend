@@ -1,11 +1,14 @@
 const { Router } = require('express');
+const { requireAuth } = require('../middleware/requireAuth');
 const { validateSchema } = require('../middleware/validateSchema');
-const { signupSchema, loginSchema, logoutSchema } = require('../schemas/auth.schema');
-const { signup, login, logout } = require('../controllers/auth.controller');
+const { registerSchema, verifyOtpSchema, onboardingSchema, loginSchema } = require('../schemas/auth.schema');
+const { register, verifyOtp, completeOnboarding, login } = require('../controllers/auth.controller');
 
 const router = Router();
 
-router.post('/signup', validateSchema(signupSchema), signup);
+router.post('/register', validateSchema(registerSchema), register);
+router.post('/verify-otp', validateSchema(verifyOtpSchema), verifyOtp);
+router.post('/onboarding', requireAuth, validateSchema(onboardingSchema), completeOnboarding);
 /**
  * @openapi
  * /api/auth/login:
@@ -61,6 +64,5 @@ router.post('/signup', validateSchema(signupSchema), signup);
  *         description: Invalid credentials
  */
 router.post('/login', validateSchema(loginSchema), login);
-router.post('/logout', validateSchema(logoutSchema), logout);
 
 module.exports = router;
