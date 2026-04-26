@@ -7,7 +7,11 @@ const registerSchema = z.object({
 
 const verifyOtpSchema = z.object({
   email: z.string().trim().email('email must be a valid email address'),
-  token: z.string().trim().regex(/^\d{6}$/, 'token must be a 6-digit code'),
+  token: z.string().trim().regex(/^\d{6,10}$/, 'token must be a 6-10 digit code'),
+});
+
+const resendOtpSchema = z.object({
+  email: z.string().trim().email('email must be a valid email address'),
 });
 
 const mobilePhoneSchema = z
@@ -76,4 +80,4 @@ const loginSchema = z.object({
   password: z.string().min(1, 'password is required'),
 });
 
-module.exports = { registerSchema, verifyOtpSchema, onboardingSchema, loginSchema };
+module.exports = { registerSchema, verifyOtpSchema, resendOtpSchema, onboardingSchema, loginSchema };

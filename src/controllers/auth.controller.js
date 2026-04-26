@@ -83,6 +83,54 @@ async function fetchProfileByUserWithServiceRole(userId) {
   return data;
 }
 
+function isEmailRateLimitError(error) {
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  if (
+    msg.includes('email rate limit') ||
+    msg.includes('rate limit exceeded') ||
+    msg.includes('over_email_send_rate_limit') ||
+    msg.includes('over email send rate limit')
+  ) {
+    return true;
+  }
+  // Supabase suele responder 429 cuando excede la cuota.
+  if (error.status === 429 || error.code === 'over_email_send_rate_limit') {
+    return true;
+  }
+  return false;
+}
+
+const RATE_LIMIT_MESSAGE =
+  'Has pedido demasiados códigos seguidos. Espera unos minutos antes de intentarlo de nuevo o usa el último código que recibiste.';
+
+async function findAuthUserByEmail(email) {
+  const serviceClient = createSupabaseServiceRoleClient();
+  const target = (email || '').toLowerCase();
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const { data, error } = await serviceClient.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      throw error;
+    }
+
+    const users = data?.users ?? [];
+    const match = users.find((u) => (u.email || '').toLowerCase() === target);
+    if (match) {
+      return match;
+    }
+    if (users.length < perPage) {
+      return null;
+    }
+    page += 1;
+    if (page > 25) {
+      return null;
+    }
+  }
+}
+
 async function register(req, res) {
   try {
     const { email, password } = req.body;
@@ -92,13 +140,76 @@ async function register(req, res) {
       password,
     });
 
+    // Caso A: Supabase devuelve un error explícito de "ya registrado".
     if (error) {
-      return res.status(400).json({ error: error.message });
+      // Rate limit del SMTP de Supabase.
+      if (isEmailRateLimitError(error)) {
+        return res.status(429).json({
+          error: RATE_LIMIT_MESSAGE,
+          code: 'EMAIL_RATE_LIMIT',
+        });
+      }
+
+      const message = (error.message || '').toLowerCase();
+      const looksAlreadyRegistered =
+        message.includes('already registered') ||
+        message.includes('already exists') ||
+        message.includes('user already');
+
+      if (!looksAlreadyRegistered) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      let existing = null;
+      try {
+        existing = await findAuthUserByEmail(email);
+      } catch (lookupErr) {
+        return res.status(400).json({ error: error.message, details: lookupErr.message });
+      }
+
+      if (!existing) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      if (existing.email_confirmed_at) {
+        return res.status(409).json({
+          error: 'Este correo ya está registrado. Inicia sesión.',
+          code: 'EMAIL_ALREADY_VERIFIED',
+        });
+      }
+
+      // El correo ya existe pero no está verificado. NO reenviamos OTP automáticamente
+      // para no agotar la cuota del SMTP. El cliente puede usar el código que ya recibió
+      // o pedir un reenvío explícito desde la pantalla de OTP.
+      return res.status(200).json({
+        verification_required: true,
+        already_registered: true,
+        resent: false,
+        user: {
+          id: existing.id,
+          email: existing.email,
+        },
+      });
     }
 
     if (!data?.user) {
       return res.status(400).json({ error: 'Register failed: user was not created' });
     }
+
+    // Caso B: signUp aparentemente OK, pero Supabase oculta usuarios verificados.
+    // Si identities = [] y email_confirmed_at != null => el correo ya estaba verificado.
+    const identities = data.user.identities ?? [];
+    const isAlreadyConfirmed = !!data.user.email_confirmed_at;
+
+    if (identities.length === 0 && isAlreadyConfirmed) {
+      return res.status(409).json({
+        error: 'Este correo ya está registrado. Inicia sesión.',
+        code: 'EMAIL_ALREADY_VERIFIED',
+      });
+    }
+
+    const alreadyRegisteredButUnverified =
+      identities.length === 0 && !isAlreadyConfirmed;
 
     const profile = await upsertProfileWithServiceRole(data.user.id, {
       role: 'client',
@@ -107,6 +218,7 @@ async function register(req, res) {
 
     return res.status(201).json({
       verification_required: true,
+      already_registered: alreadyRegisteredButUnverified,
       user: {
         id: data.user.id,
         email: data.user.email,
@@ -315,6 +427,32 @@ async function login(req, res) {
     const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
 
     if (error) {
+      const message = (error.message || '').toLowerCase();
+      const emailNotConfirmed =
+        message.includes('email not confirmed') ||
+        message.includes('not confirmed') ||
+        message.includes('email_not_confirmed');
+
+      if (emailNotConfirmed) {
+        // Avisamos al cliente para que vaya a la pantalla de OTP. El reenvío
+        // se hace solo si el usuario lo solicita explícitamente (desde OtpScreen).
+        return res.status(403).json({
+          error:
+            'Tu correo no está verificado. Ingresa el código que te enviamos o pide uno nuevo.',
+          code: 'EMAIL_NOT_CONFIRMED',
+          verification_required: true,
+          resent: false,
+          user: { email },
+        });
+      }
+
+      if (isEmailRateLimitError(error)) {
+        return res.status(429).json({
+          error: RATE_LIMIT_MESSAGE,
+          code: 'EMAIL_RATE_LIMIT',
+        });
+      }
+
       return res.status(401).json({ error: error.message });
     }
 
@@ -356,4 +494,32 @@ async function logout(req, res) {
   }
 }
 
-module.exports = { register, verifyOtp, completeOnboarding, login, signup, logout };
+async function resendOtp(req, res) {
+  try {
+    const { email } = req.body;
+
+    const { error } = await supabaseAnon.auth.resend({
+      type: 'signup',
+      email,
+    });
+
+    if (error) {
+      if (isEmailRateLimitError(error)) {
+        return res.status(429).json({
+          error: RATE_LIMIT_MESSAGE,
+          code: 'EMAIL_RATE_LIMIT',
+        });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.json({
+      message: 'Verification code resent',
+      resent: true,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to resend OTP', details: err.message });
+  }
+}
+
+module.exports = { register, verifyOtp, resendOtp, completeOnboarding, login, signup, logout };

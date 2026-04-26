@@ -1,13 +1,26 @@
 const { Router } = require('express');
 const { requireAuth } = require('../middleware/requireAuth');
 const { validateSchema } = require('../middleware/validateSchema');
-const { registerSchema, verifyOtpSchema, onboardingSchema, loginSchema } = require('../schemas/auth.schema');
-const { register, verifyOtp, completeOnboarding, login } = require('../controllers/auth.controller');
+const {
+  registerSchema,
+  verifyOtpSchema,
+  resendOtpSchema,
+  onboardingSchema,
+  loginSchema,
+} = require('../schemas/auth.schema');
+const {
+  register,
+  verifyOtp,
+  resendOtp,
+  completeOnboarding,
+  login,
+} = require('../controllers/auth.controller');
 
 const router = Router();
 
 router.post('/register', validateSchema(registerSchema), register);
 router.post('/verify-otp', validateSchema(verifyOtpSchema), verifyOtp);
+router.post('/resend-otp', validateSchema(resendOtpSchema), resendOtp);
 router.post('/onboarding', requireAuth, validateSchema(onboardingSchema), completeOnboarding);
 /**
  * @openapi

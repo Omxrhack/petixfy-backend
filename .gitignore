@@ -1,1 +1,36 @@
+# Secrets / env
 .env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime
+pids
+*.pid
+*.seed
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Coverage / build
+coverage/
+dist/
+build/
+
+# Dependencies (limpiar el tracking aparte con `git rm -r --cached node_modules` cuando quieras)
+node_modules/
+
+# Archivos duplicados accidentales
+*\ [0-9].*
