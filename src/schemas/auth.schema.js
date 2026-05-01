@@ -64,6 +64,7 @@ const vetOnboardingSchema = z.object({
     accepts_emergencies: z.boolean(),
     schedule_json: z.object({
       label: z.string().trim().min(1, 'schedule_json.label is required'),
+      base_location_note: z.string().trim().max(500).optional().or(z.literal('')),
     }),
   }),
   vet_finances: z.object({
