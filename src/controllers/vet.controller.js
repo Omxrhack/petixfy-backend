@@ -2,6 +2,8 @@
  * Dashboard, agenda, disponibilidad, emergencias asignadas y expediente (vet).
  */
 
+const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
+const { safeBasename } = require('../lib/safeBasename');
 const { dashboardQuerySchema, scheduleQuerySchema } = require('../schemas/vet.schema');
 
 function utcDayBounds(dateStr) {
@@ -379,6 +381,93 @@ async function respondEmergency(req, res) {
   }
 }
 
+/**
+ * Misma regla de acceso que GET /vet/pets/:id/summary. Sube con service role (carpeta Storage = owner_id).
+ */
+async function uploadPetPhotoAsVet(req, res) {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: 'photo file is required (multipart field name: photo)' });
+    }
+
+    const vetId = req.user.id;
+    const petId = req.params.id;
+
+    const { data: pet, error: petError } = await req.supabase
+      .from('pets')
+      .select('id, owner_id')
+      .eq('id', petId)
+      .maybeSingle();
+
+    if (petError) {
+      return res.status(400).json({ error: petError.message, details: petError });
+    }
+    if (!pet) {
+      return res.status(404).json({ error: 'Pet not found' });
+    }
+
+    const { data: apptLink } = await req.supabase
+      .from('appointments')
+      .select('id')
+      .eq('pet_id', petId)
+      .eq('vet_id', vetId)
+      .limit(1)
+      .maybeSingle();
+
+    const { data: emergLink } = await req.supabase
+      .from('emergencies')
+      .select('id')
+      .eq('pet_id', petId)
+      .eq('assigned_vet_id', vetId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!apptLink && !emergLink) {
+      return res.status(403).json({ error: 'No assignment links you to this pet' });
+    }
+
+    const ownerId = pet.owner_id;
+    const objectPath = `${ownerId}/${petId}/${Date.now()}-${safeBasename(req.file.originalname)}`;
+
+    let admin;
+    try {
+      admin = createSupabaseServiceRoleClient();
+    } catch (e) {
+      return res.status(503).json({ error: 'Upload unavailable', details: e.message });
+    }
+
+    const { error: uploadError } = await admin.storage
+      .from('vetgo-images')
+      .upload(objectPath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return res.status(400).json({ error: uploadError.message, details: uploadError });
+    }
+
+    const {
+      data: { publicUrl },
+    } = admin.storage.from('vetgo-images').getPublicUrl(objectPath);
+
+    const { data, error } = await admin
+      .from('pets')
+      .update({ photo_url: publicUrl })
+      .eq('id', petId)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to upload pet photo', details: err.message });
+  }
+}
+
 module.exports = {
   patchAvailability,
   getDashboard,
@@ -386,4 +475,5 @@ module.exports = {
   getPetSummary,
   listActiveEmergencies,
   respondEmergency,
+  uploadPetPhotoAsVet,
 };
