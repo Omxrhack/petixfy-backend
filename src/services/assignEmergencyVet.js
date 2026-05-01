@@ -1,5 +1,6 @@
 /**
- * Assigns an on-duty vet to a new emergency (nearest within coverage radius when possible).
+ * Assigns a veterinarian to a new emergency so GET /vet/emergencies/active returns rows.
+ * Uses service_role (RLS bypass). Multiple fallbacks so dev DBs with defaults still work.
  */
 
 const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
@@ -17,16 +18,20 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * @param {string} emergencyId
- * @param {number} clientLat
- * @param {number} clientLng
- * @returns {Promise<string|null>} profile_id del vet asignado, o null
+ * Orden de preferencia de candidatos (cada paso solo si el anterior quedo vacio):
+ * 1) on_duty + accepts_emergencies
+ * 2) accepts_emergencies
+ * 3) on_duty
+ * 4) cualquier fila en vet_services (vet registrado en onboarding)
+ *
+ * @returns {Promise<string|null>}
  */
 async function assignNearestOnDutyVet(emergencyId, clientLat, clientLng) {
   let admin;
   try {
     admin = createSupabaseServiceRoleClient();
-  } catch {
+  } catch (e) {
+    console.warn('[assignEmergencyVet] no service role client:', e?.message ?? e);
     return null;
   }
 
@@ -36,6 +41,7 @@ async function assignNearestOnDutyVet(emergencyId, clientLat, clientLng) {
     .eq('role', 'vet');
 
   if (pErr || !profiles?.length) {
+    console.warn('[assignEmergencyVet] no vet profiles:', pErr?.message ?? 'empty');
     return null;
   }
 
@@ -47,36 +53,52 @@ async function assignNearestOnDutyVet(emergencyId, clientLat, clientLng) {
     .in('profile_id', vetIds);
 
   if (sErr || !services?.length) {
+    console.warn('[assignEmergencyVet] no vet_services rows:', sErr?.message ?? 'empty');
     return null;
   }
 
-  const onDutyEmergency = services.filter((s) => s.on_duty === true && s.accepts_emergencies === true);
-  const acceptsOnly = services.filter((s) => s.accepts_emergencies === true);
-  const primarySet = new Set((onDutyEmergency.length ? onDutyEmergency : acceptsOnly).map((s) => s.profile_id));
+  const dutyAndAccept = services.filter((s) => s.on_duty === true && s.accepts_emergencies === true);
+  const acceptOnly = services.filter((s) => s.accepts_emergencies === true);
+  const dutyOnly = services.filter((s) => s.on_duty === true);
 
-  if (!primarySet.size) {
-    return null;
+  let orderedIds = [];
+  if (dutyAndAccept.length) {
+    orderedIds = dutyAndAccept.map((s) => s.profile_id);
+  } else if (acceptOnly.length) {
+    orderedIds = acceptOnly.map((s) => s.profile_id);
+  } else if (dutyOnly.length) {
+    orderedIds = dutyOnly.map((s) => s.profile_id);
+    console.warn('[assignEmergencyVet] falling back to on_duty vets (no accepts_emergencies)');
+  } else {
+    orderedIds = [...new Set(services.map((s) => s.profile_id))];
+    console.warn('[assignEmergencyVet] falling back to any vet_services row (set accepts_emergencies / on_duty)');
   }
 
-  const candidateIds = [...primarySet];
+  const candidateIds = [...new Set(orderedIds)];
+  if (!candidateIds.length) {
+    return null;
+  }
 
   const { data: details, error: dErr } = await admin
     .from('vet_details')
     .select('profile_id, base_latitude, base_longitude, coverage_radius_km')
     .in('profile_id', candidateIds);
 
-  if (dErr || !details?.length) {
-    return null;
+  if (dErr) {
+    console.warn('[assignEmergencyVet] vet_details query:', dErr.message);
   }
+
+  const detailRows = details ?? [];
+  const detailById = Object.fromEntries(detailRows.map((d) => [d.profile_id, d]));
 
   let bestInRadius = null;
   let bestDistInRadius = Infinity;
   let bestAny = null;
   let bestDistAny = Infinity;
 
-  for (const d of details) {
-    const vid = d.profile_id;
-    if (!primarySet.has(vid)) continue;
+  for (const vid of candidateIds) {
+    const d = detailById[vid];
+    if (!d) continue;
 
     const vLat = d.base_latitude != null ? Number(d.base_latitude) : NaN;
     const vLng = d.base_longitude != null ? Number(d.base_longitude) : NaN;
@@ -99,10 +121,12 @@ async function assignNearestOnDutyVet(emergencyId, clientLat, clientLng) {
     }
   }
 
-  const chosen = bestInRadius ?? bestAny;
+  let chosen = bestInRadius ?? bestAny ?? candidateIds[0];
 
-  if (!chosen) {
-    return null;
+  if (!detailRows.length || (!bestInRadius && !bestAny)) {
+    console.warn(
+      '[assignEmergencyVet] assigning without geo match (add vet_details base_latitude/base_longitude for distance)',
+    );
   }
 
   const { error: upErr } = await admin
