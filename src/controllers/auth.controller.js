@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { supabaseAnon } = require('../lib/supabaseAnon');
 const { createSupabaseClientWithJwt } = require('../lib/supabaseUserClient');
 const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
@@ -104,6 +105,95 @@ function isEmailRateLimitError(error) {
 const RATE_LIMIT_MESSAGE =
   'El servicio de correo del proyecto está saturado momentáneamente y no pudo enviar el código. Esto pasa con cualquier correo, no solo con el tuyo. Intenta de nuevo en unos minutos.';
 
+const OTP_TTL_MS = 15 * 60 * 1000;
+const otpStore = new Map();
+
+function normalizeEmail(email) {
+  return (email || '').trim().toLowerCase();
+}
+
+function generateOtpCode(length = 6) {
+  const max = 10 ** length;
+  const num = crypto.randomInt(0, max);
+  return String(num).padStart(length, '0');
+}
+
+function otpExpiryLabel(date) {
+  try {
+    return date.toLocaleString('es-MX', {
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function saveOtp(email, code) {
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+  otpStore.set(normalizeEmail(email), { code, expiresAtMs: expiresAt.getTime() });
+  return expiresAt;
+}
+
+function verifyStoredOtp(email, code) {
+  const key = normalizeEmail(email);
+  const entry = otpStore.get(key);
+  if (!entry) return { ok: false, reason: 'not_found' };
+  if (Date.now() > entry.expiresAtMs) {
+    otpStore.delete(key);
+    return { ok: false, reason: 'expired' };
+  }
+  if (String(code).trim() !== entry.code) {
+    return { ok: false, reason: 'invalid' };
+  }
+  otpStore.delete(key);
+  return { ok: true };
+}
+
+async function sendOtpWithEmailJs(email, code, expiresAt) {
+  const serviceId = process.env.EMAIL_SERVICE;
+  const publicKey = process.env.EMAIL_KEY;
+  const privateKey = process.env.EMAIL_SECRET;
+  const templateId = process.env.EMAIL_TEMPLATE;
+  if (!serviceId || !publicKey || !privateKey || !templateId) {
+    throw new Error('Email provider is not configured (EMAIL_SERVICE/EMAIL_KEY/EMAIL_SECRET/EMAIL_TEMPLATE).');
+  }
+
+  const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      service_id: serviceId,
+      template_id: templateId,
+      user_id: publicKey,
+      accessToken: privateKey,
+      template_params: {
+        email,
+        passcode: code,
+        time: otpExpiryLabel(expiresAt),
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    throw new Error(`Email provider rejected OTP send (${response.status}): ${details || 'unknown error'}`);
+  }
+}
+
+async function issueAndSendOtp(email) {
+  const code = generateOtpCode(6);
+  const expiresAt = saveOtp(email, code);
+  await sendOtpWithEmailJs(email, code, expiresAt);
+  return expiresAt;
+}
+
 async function findAuthUserByEmail(email) {
   const serviceClient = createSupabaseServiceRoleClient();
   const target = (email || '').toLowerCase();
@@ -134,97 +224,60 @@ async function findAuthUserByEmail(email) {
 async function register(req, res) {
   try {
     const { email, password } = req.body;
+    const serviceClient = createSupabaseServiceRoleClient();
+    const normalized = normalizeEmail(email);
 
-    const { data, error } = await supabaseAnon.auth.signUp({
-      email,
-      password,
-    });
-
-    // Caso A: Supabase devuelve un error explícito de "ya registrado".
-    if (error) {
-      // Rate limit del SMTP de Supabase.
-      if (isEmailRateLimitError(error)) {
-        return res.status(429).json({
-          error: RATE_LIMIT_MESSAGE,
-          code: 'EMAIL_RATE_LIMIT',
-        });
-      }
-
-      const message = (error.message || '').toLowerCase();
-      const looksAlreadyRegistered =
-        message.includes('already registered') ||
-        message.includes('already exists') ||
-        message.includes('user already');
-
-      if (!looksAlreadyRegistered) {
-        return res.status(400).json({ error: error.message });
-      }
-
-      let existing = null;
-      try {
-        existing = await findAuthUserByEmail(email);
-      } catch (lookupErr) {
-        return res.status(400).json({ error: error.message, details: lookupErr.message });
-      }
-
-      if (!existing) {
-        return res.status(400).json({ error: error.message });
-      }
-
-      if (existing.email_confirmed_at) {
-        return res.status(409).json({
-          error: 'Este correo ya está registrado. Inicia sesión.',
-          code: 'EMAIL_ALREADY_VERIFIED',
-        });
-      }
-
-      // El correo ya existe pero no está verificado. NO reenviamos OTP automáticamente
-      // para no agotar la cuota del SMTP. El cliente puede usar el código que ya recibió
-      // o pedir un reenvío explícito desde la pantalla de OTP.
-      return res.status(200).json({
-        verification_required: true,
-        already_registered: true,
-        resent: false,
-        user: {
-          id: existing.id,
-          email: existing.email,
-        },
-      });
-    }
-
-    if (!data?.user) {
-      return res.status(400).json({ error: 'Register failed: user was not created' });
-    }
-
-    // Caso B: signUp aparentemente OK, pero Supabase oculta usuarios verificados.
-    // Si identities = [] y email_confirmed_at != null => el correo ya estaba verificado.
-    const identities = data.user.identities ?? [];
-    const isAlreadyConfirmed = !!data.user.email_confirmed_at;
-
-    if (identities.length === 0 && isAlreadyConfirmed) {
+    let existing = await findAuthUserByEmail(normalized);
+    if (existing?.email_confirmed_at) {
       return res.status(409).json({
         error: 'Este correo ya está registrado. Inicia sesión.',
         code: 'EMAIL_ALREADY_VERIFIED',
       });
     }
 
-    const alreadyRegisteredButUnverified =
-      identities.length === 0 && !isAlreadyConfirmed;
+    let user = existing;
+    if (!user) {
+      const { data: created, error: createError } = await serviceClient.auth.admin.createUser({
+        email: normalized,
+        password,
+        email_confirm: false,
+      });
+      if (createError || !created?.user) {
+        return res.status(400).json({ error: createError?.message || 'Register failed: user was not created' });
+      }
+      user = created.user;
+    } else {
+      const { error: updateError } = await serviceClient.auth.admin.updateUserById(user.id, {
+        password,
+      });
+      if (updateError) {
+        return res.status(400).json({ error: updateError.message });
+      }
+    }
 
-    const profile = await upsertProfileWithServiceRole(data.user.id, {
+    const profile = await upsertProfileWithServiceRole(user.id, {
       role: 'client',
       ...DEFAULT_PROFILE_FLAGS,
     });
 
+    try {
+      await issueAndSendOtp(normalized);
+    } catch (mailErr) {
+      return res.status(500).json({
+        error: 'No se pudo enviar el código de verificación',
+        details: mailErr.message,
+      });
+    }
+
     return res.status(201).json({
       verification_required: true,
-      already_registered: alreadyRegisteredButUnverified,
+      already_registered: !!existing,
       user: {
-        id: data.user.id,
-        email: data.user.email,
+        id: user.id,
+        email: user.email,
       },
       profile: profile ?? {
-        id: data.user.id,
+        id: user.id,
         role: 'client',
         ...DEFAULT_PROFILE_FLAGS,
       },
@@ -237,37 +290,40 @@ async function register(req, res) {
 async function verifyOtp(req, res) {
   try {
     const { email, token } = req.body;
-    const { data, error } = await supabaseAnon.auth.verifyOtp({
-      email,
-      token,
-      type: 'email',
-    });
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
+    const check = verifyStoredOtp(email, token);
+    if (!check.ok) {
+      const message =
+        check.reason === 'expired'
+          ? 'El código expiró. Solicita uno nuevo.'
+          : 'Código incorrecto.';
+      return res.status(400).json({ error: message });
     }
 
-    if (!data?.user) {
+    const existing = await findAuthUserByEmail(email);
+    if (!existing) {
       return res.status(400).json({ error: 'OTP verification failed: user not found' });
     }
 
-    await upsertProfileWithServiceRole(data.user.id, {
+    const serviceClient = createSupabaseServiceRoleClient();
+    const { error: confirmError } = await serviceClient.auth.admin.updateUserById(existing.id, {
+      email_confirm: true,
+    });
+    if (confirmError) {
+      return res.status(400).json({ error: confirmError.message });
+    }
+
+    await upsertProfileWithServiceRole(existing.id, {
       is_verified: true,
     });
 
-    let profile = null;
-    if (data.session?.access_token) {
-      profile = await fetchProfileByUserWithJwt(data.user.id, data.session.access_token);
-    } else {
-      profile = await fetchProfileByUserWithServiceRole(data.user.id);
-    }
+    const profile = await fetchProfileByUserWithServiceRole(existing.id);
 
     return res.json({
-      access_token: data.session?.access_token ?? null,
-      refresh_token: data.session?.refresh_token ?? null,
-      expires_in: data.session?.expires_in ?? null,
-      token_type: data.session?.token_type ?? null,
-      user: userPayload(data.user, profile),
+      access_token: null,
+      refresh_token: null,
+      expires_in: null,
+      token_type: null,
+      user: userPayload(existing, profile),
       profile,
     });
   } catch (err) {
@@ -511,6 +567,16 @@ async function login(req, res) {
     }
 
     const profile = await fetchProfileByUserWithJwt(data.user.id, data.session.access_token);
+    const profileVerified = profile?.is_verified ?? false;
+    if (!profileVerified) {
+      return res.status(403).json({
+        error: 'Tu correo no está verificado. Ingresa el código que te enviamos o pide uno nuevo.',
+        code: 'EMAIL_NOT_CONFIRMED',
+        verification_required: true,
+        resent: false,
+        user: { email },
+      });
+    }
 
     return res.json({
       access_token: data.session.access_token,
@@ -547,20 +613,25 @@ async function logout(req, res) {
 async function resendOtp(req, res) {
   try {
     const { email } = req.body;
+    const normalized = normalizeEmail(email);
+    const existing = await findAuthUserByEmail(normalized);
+    if (!existing) {
+      return res.status(404).json({ error: 'No existe una cuenta con ese correo.' });
+    }
+    if (existing.email_confirmed_at) {
+      return res.status(409).json({
+        error: 'Este correo ya está verificado. Inicia sesión.',
+        code: 'EMAIL_ALREADY_VERIFIED',
+      });
+    }
 
-    const { error } = await supabaseAnon.auth.resend({
-      type: 'signup',
-      email,
-    });
-
-    if (error) {
-      if (isEmailRateLimitError(error)) {
-        return res.status(429).json({
-          error: RATE_LIMIT_MESSAGE,
-          code: 'EMAIL_RATE_LIMIT',
-        });
-      }
-      return res.status(400).json({ error: error.message });
+    try {
+      await issueAndSendOtp(normalized);
+    } catch (mailErr) {
+      return res.status(500).json({
+        error: 'No se pudo reenviar el código de verificación',
+        details: mailErr.message,
+      });
     }
 
     return res.json({
