@@ -2,9 +2,11 @@
  * Citas a domicilio.
  */
 
+const { isValidAssignableVet } = require('../services/vetValidation');
+
 async function createAppointment(req, res) {
   try {
-    const { pet_id, scheduled_at, notes, status } = req.body;
+    const { pet_id, scheduled_at, notes, status, vet_id } = req.body;
 
     if (!pet_id || !scheduled_at) {
       return res.status(400).json({ error: 'pet_id and scheduled_at are required' });
@@ -33,6 +35,13 @@ async function createAppointment(req, res) {
       notes: notes ?? null,
       status: status ?? 'pending',
     };
+
+    if (vet_id) {
+      const ok = await isValidAssignableVet(vet_id);
+      if (ok) {
+        row.vet_id = vet_id;
+      }
+    }
 
     const { data, error } = await req.supabase.from('appointments').insert(row).select().single();
 

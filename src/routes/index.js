@@ -8,12 +8,14 @@ const rewardsRoutes = require('./rewards.routes');
 const triageRoutes = require('./triage.routes');
 const trackingRoutes = require('./tracking.routes');
 const vetRoutes = require('./vet.routes');
+const vetsCatalogRoutes = require('./vets.routes');
 const authRoutes = require('./authRoutes');
 const { requireVet } = require('../middleware/requireVet');
 
 const router = Router();
 
 router.use('/auth', authRoutes);
+router.use('/vets', requireAuth, vetsCatalogRoutes);
 router.use('/pets', requireAuth, petsRoutes);
 router.use('/appointments', requireAuth, appointmentsRoutes);
 router.use('/emergencies', requireAuth, emergenciesRoutes);
