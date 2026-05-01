@@ -7,7 +7,7 @@ const registerSchema = z.object({
 
 const verifyOtpSchema = z.object({
   email: z.string().trim().email('email must be a valid email address'),
-  token: z.string().trim().regex(/^\d{8}$/, 'token must be an 8-digit code'),
+  token: z.string().trim().regex(/^\d{6}$/, 'token must be a 6-digit code'),
 });
 
 const resendOtpSchema = z.object({
