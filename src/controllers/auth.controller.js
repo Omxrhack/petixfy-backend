@@ -420,6 +420,56 @@ async function completeOnboarding(req, res) {
   }
 }
 
+async function refreshSession(req, res) {
+  try {
+    const { refresh_token: refreshToken } = req.body;
+
+    const { data, error } = await supabaseAnon.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+
+    if (error) {
+      return res.status(401).json({ error: error.message });
+    }
+
+    if (!data?.session || !data?.user) {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    const profile = await fetchProfileByUserWithJwt(data.user.id, data.session.access_token);
+
+    return res.json({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+      expires_in: data.session.expires_in,
+      token_type: data.session.token_type,
+      user: userPayload(data.user, profile),
+      profile,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to refresh session', details: err.message });
+  }
+}
+
+async function me(req, res) {
+  try {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    if (!token) {
+      return res.status(401).json({ error: 'Missing bearer token' });
+    }
+
+    const profile = await fetchProfileByUserWithJwt(req.user.id, token);
+
+    return res.json({
+      user: userPayload(req.user, profile),
+      profile,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to load session', details: err.message });
+  }
+}
+
 async function login(req, res) {
   try {
     const { email, password } = req.body;
@@ -522,4 +572,14 @@ async function resendOtp(req, res) {
   }
 }
 
-module.exports = { register, verifyOtp, resendOtp, completeOnboarding, login, signup, logout };
+module.exports = {
+  register,
+  verifyOtp,
+  resendOtp,
+  completeOnboarding,
+  login,
+  signup,
+  logout,
+  refreshSession,
+  me,
+};

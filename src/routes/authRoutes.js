@@ -7,6 +7,7 @@ const {
   resendOtpSchema,
   onboardingSchema,
   loginSchema,
+  refreshSessionSchema,
 } = require('../schemas/auth.schema');
 const {
   register,
@@ -14,6 +15,8 @@ const {
   resendOtp,
   completeOnboarding,
   login,
+  refreshSession,
+  me,
 } = require('../controllers/auth.controller');
 
 const router = Router();
