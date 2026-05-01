@@ -25,6 +25,8 @@ router.post('/register', validateSchema(registerSchema), register);
 router.post('/verify-otp', validateSchema(verifyOtpSchema), verifyOtp);
 router.post('/resend-otp', validateSchema(resendOtpSchema), resendOtp);
 router.post('/onboarding', requireAuth, validateSchema(onboardingSchema), completeOnboarding);
+router.post('/refresh', validateSchema(refreshSessionSchema), refreshSession);
+router.get('/me', requireAuth, me);
 /**
  * @openapi
  * /api/auth/login:
