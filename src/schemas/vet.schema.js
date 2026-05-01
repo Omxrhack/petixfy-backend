@@ -21,9 +21,16 @@ const dashboardQuerySchema = z.object({
   date: isoDateString.optional(),
 });
 
+const createVetAppointmentSchema = z.object({
+  pet_id: z.string().uuid(),
+  scheduled_at: z.string().trim().min(1),
+  notes: z.string().trim().max(2000).optional(),
+});
+
 module.exports = {
   availabilitySchema,
   emergencyRespondSchema,
   scheduleQuerySchema,
   dashboardQuerySchema,
+  createVetAppointmentSchema,
 };

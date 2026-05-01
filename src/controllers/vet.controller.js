@@ -406,6 +406,113 @@ async function respondEmergency(req, res) {
   }
 }
 
+/** Veterinario asigna a si mismo una cita del pool (vet_id null). */
+async function claimAppointment(req, res) {
+  try {
+    const vetId = req.user.id;
+    const appointmentId = req.params.id;
+
+    const { data: updated, error } = await req.supabase
+      .from('appointments')
+      .update({ vet_id: vetId })
+      .eq('id', appointmentId)
+      .is('vet_id', null)
+      .in('status', ['pending', 'confirmed'])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!updated) {
+      return res.status(409).json({
+        error: 'La cita no esta disponible para asignacion (ya asignada o estado no valido).',
+      });
+    }
+
+    return res.json({ appointment: updated });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to claim appointment', details: err.message });
+  }
+}
+
+/** Nueva cita confirmada; insert con service role si hay vinculo con la mascota (cita/emergencia). */
+async function createVetAppointment(req, res) {
+  try {
+    const vetId = req.user.id;
+    const { pet_id: petId, scheduled_at: scheduledAt, notes } = req.body;
+
+    const { data: pet, error: petError } = await req.supabase
+      .from('pets')
+      .select('id, owner_id')
+      .eq('id', petId)
+      .maybeSingle();
+
+    if (petError) {
+      return res.status(400).json({ error: petError.message, details: petError });
+    }
+    if (!pet) {
+      return res.status(404).json({ error: 'Pet not found or not accessible' });
+    }
+
+    const { data: apptAssigned } = await req.supabase
+      .from('appointments')
+      .select('id')
+      .eq('pet_id', petId)
+      .eq('vet_id', vetId)
+      .limit(1)
+      .maybeSingle();
+
+    const { data: apptPool } = await req.supabase
+      .from('appointments')
+      .select('id')
+      .eq('pet_id', petId)
+      .is('vet_id', null)
+      .in('status', ['pending', 'confirmed'])
+      .limit(1)
+      .maybeSingle();
+
+    const { data: emergLink } = await req.supabase
+      .from('emergencies')
+      .select('id')
+      .eq('pet_id', petId)
+      .eq('assigned_vet_id', vetId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!apptAssigned && !apptPool && !emergLink) {
+      return res.status(403).json({ error: 'No active assignment links you to this pet' });
+    }
+
+    let admin;
+    try {
+      admin = createSupabaseServiceRoleClient();
+    } catch (e) {
+      return res.status(503).json({ error: 'Scheduling unavailable', details: e.message });
+    }
+
+    const row = {
+      pet_id: petId,
+      owner_id: pet.owner_id,
+      scheduled_at: scheduledAt,
+      notes: notes ?? null,
+      status: 'confirmed',
+      vet_id: vetId,
+    };
+
+    const { data, error } = await admin.from('appointments').insert(row).select().single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.status(201).json(data);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to create appointment', details: err.message });
+  }
+}
+
 /**
  * Misma regla de acceso que GET /vet/pets/:id/summary. Sube con service role (carpeta Storage = owner_id).
  */
@@ -510,4 +617,6 @@ module.exports = {
   listActiveEmergencies,
   respondEmergency,
   uploadPetPhotoAsVet,
+  claimAppointment,
+  createVetAppointment,
 };

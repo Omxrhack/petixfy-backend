@@ -6,7 +6,15 @@ const { isValidAssignableVet } = require('../services/vetValidation');
 
 async function createAppointment(req, res) {
   try {
-    const { pet_id, scheduled_at, notes, status, vet_id } = req.body;
+    const {
+      pet_id,
+      scheduled_at,
+      notes,
+      status,
+      vet_id,
+      visit_latitude: visitLatitude,
+      visit_longitude: visitLongitude,
+    } = req.body;
 
     if (!pet_id || !scheduled_at) {
       return res.status(400).json({ error: 'pet_id and scheduled_at are required' });
@@ -47,6 +55,12 @@ async function createAppointment(req, res) {
 
     if (error) {
       return res.status(400).json({ error: error.message, details: error });
+    }
+
+    const lat = visitLatitude != null ? Number(visitLatitude) : null;
+    const lng = visitLongitude != null ? Number(visitLongitude) : null;
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      await req.supabase.from('client_details').update({ latitude: lat, longitude: lng }).eq('profile_id', ownerId);
     }
 
     return res.status(201).json(data);

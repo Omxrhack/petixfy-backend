@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const { uploadPetPhotoMiddleware } = require('../middleware/uploadPetPhoto');
 const { validateSchema } = require('../middleware/validateSchema');
-const { availabilitySchema, emergencyRespondSchema } = require('../schemas/vet.schema');
+const { availabilitySchema, emergencyRespondSchema, createVetAppointmentSchema } = require('../schemas/vet.schema');
 const {
   patchAvailability,
   getDashboard,
@@ -10,11 +10,15 @@ const {
   listActiveEmergencies,
   respondEmergency,
   uploadPetPhotoAsVet,
+  claimAppointment,
+  createVetAppointment,
 } = require('../controllers/vet.controller');
 
 const router = Router();
 
 router.patch('/availability', validateSchema(availabilitySchema), patchAvailability);
+router.patch('/appointments/:id/claim', claimAppointment);
+router.post('/appointments', validateSchema(createVetAppointmentSchema), createVetAppointment);
 router.get('/dashboard', getDashboard);
 router.get('/schedule', getSchedule);
 router.get('/pets/:id/summary', getPetSummary);
