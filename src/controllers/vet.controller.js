@@ -74,6 +74,12 @@ async function getDashboard(req, res) {
       return res.status(400).json({ error: vsErr.message, details: vsErr });
     }
 
+    const { data: vetBaseRow } = await req.supabase
+      .from('vet_details')
+      .select('base_latitude, base_longitude')
+      .eq('profile_id', vetId)
+      .maybeSingle();
+
     const { data: appts, error: apptErr } = await req.supabase
       .from('appointments')
       .select(
@@ -124,6 +130,8 @@ async function getDashboard(req, res) {
     return res.json({
       date: dateStr,
       on_duty: vsRow?.on_duty ?? false,
+      vet_base_latitude: vetBaseRow?.base_latitude ?? null,
+      vet_base_longitude: vetBaseRow?.base_longitude ?? null,
       pending_count,
       earnings_mxn_today,
       visits,
