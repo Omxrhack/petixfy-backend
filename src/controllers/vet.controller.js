@@ -17,6 +17,15 @@ function todayUtcDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Citas asignadas a este vet o en pool (sin vet_id, pendientes/confirmadas). */
+function filterAssignedAndPoolAppointments(rows, vetId) {
+  return (rows ?? []).filter((a) => {
+    if (a.vet_id === vetId) return true;
+    if (a.vet_id == null && (a.status === 'pending' || a.status === 'confirmed')) return true;
+    return false;
+  });
+}
+
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -82,21 +91,22 @@ async function getDashboard(req, res) {
       .eq('profile_id', vetId)
       .maybeSingle();
 
-    const { data: appts, error: apptErr } = await req.supabase
+    const appointmentSelect =
+      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url)';
+
+    const { data: rawAppts, error: apptErr } = await req.supabase
       .from('appointments')
-      .select(
-        'id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url)',
-      )
-      .eq('vet_id', vetId)
+      .select(appointmentSelect)
       .gte('scheduled_at', startIso)
       .lt('scheduled_at', endIso)
-      .order('scheduled_at', { ascending: true });
+      .order('scheduled_at', { ascending: true })
+      .or(`vet_id.eq.${vetId},vet_id.is.null`);
 
     if (apptErr) {
       return res.status(400).json({ error: apptErr.message, details: apptErr });
     }
 
-    const list = appts ?? [];
+    const list = filterAssignedAndPoolAppointments(rawAppts, vetId);
     const ownerIds = [...new Set(list.map((a) => a.owner_id).filter(Boolean))];
     let detailsMap = {};
     if (ownerIds.length > 0) {
@@ -155,21 +165,22 @@ async function getSchedule(req, res) {
     const dateStr = parsed.data.date ?? todayUtcDateString();
     const { startIso, endIso } = utcDayBounds(dateStr);
 
-    const { data: appts, error } = await req.supabase
+    const appointmentSelect =
+      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url)';
+
+    const { data: rawAppts, error } = await req.supabase
       .from('appointments')
-      .select(
-        'id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url)',
-      )
-      .eq('vet_id', vetId)
+      .select(appointmentSelect)
       .gte('scheduled_at', startIso)
       .lt('scheduled_at', endIso)
-      .order('scheduled_at', { ascending: true });
+      .order('scheduled_at', { ascending: true })
+      .or(`vet_id.eq.${vetId},vet_id.is.null`);
 
     if (error) {
       return res.status(400).json({ error: error.message, details: error });
     }
 
-    const list = appts ?? [];
+    const list = filterAssignedAndPoolAppointments(rawAppts, vetId);
     const ownerIds = [...new Set(list.map((a) => a.owner_id).filter(Boolean))];
     let detailsMap = {};
     if (ownerIds.length > 0) {
@@ -186,6 +197,7 @@ async function getSchedule(req, res) {
 
     const appointments = list.map((a) => ({
       id: a.id,
+      vet_id: a.vet_id,
       scheduled_at: a.scheduled_at,
       status: a.status,
       notes: a.notes,
@@ -216,11 +228,20 @@ async function getPetSummary(req, res) {
       return res.status(404).json({ error: 'Pet not found or not accessible' });
     }
 
-    const { data: apptLink } = await req.supabase
+    const { data: apptAssigned } = await req.supabase
       .from('appointments')
       .select('id')
       .eq('pet_id', petId)
       .eq('vet_id', vetId)
+      .limit(1)
+      .maybeSingle();
+
+    const { data: apptPool } = await req.supabase
+      .from('appointments')
+      .select('id')
+      .eq('pet_id', petId)
+      .is('vet_id', null)
+      .in('status', ['pending', 'confirmed'])
       .limit(1)
       .maybeSingle();
 
@@ -232,7 +253,7 @@ async function getPetSummary(req, res) {
       .limit(1)
       .maybeSingle();
 
-    if (!apptLink && !emergLink) {
+    if (!apptAssigned && !apptPool && !emergLink) {
       return res.status(403).json({ error: 'No active assignment links you to this pet' });
     }
 
@@ -406,11 +427,20 @@ async function uploadPetPhotoAsVet(req, res) {
       return res.status(404).json({ error: 'Pet not found' });
     }
 
-    const { data: apptLink } = await req.supabase
+    const { data: apptAssigned } = await req.supabase
       .from('appointments')
       .select('id')
       .eq('pet_id', petId)
       .eq('vet_id', vetId)
+      .limit(1)
+      .maybeSingle();
+
+    const { data: apptPool } = await req.supabase
+      .from('appointments')
+      .select('id')
+      .eq('pet_id', petId)
+      .is('vet_id', null)
+      .in('status', ['pending', 'confirmed'])
       .limit(1)
       .maybeSingle();
 
@@ -422,7 +452,7 @@ async function uploadPetPhotoAsVet(req, res) {
       .limit(1)
       .maybeSingle();
 
-    if (!apptLink && !emergLink) {
+    if (!apptAssigned && !apptPool && !emergLink) {
       return res.status(403).json({ error: 'No assignment links you to this pet' });
     }
 
