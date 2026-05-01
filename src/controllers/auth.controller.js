@@ -109,6 +109,8 @@ const RATE_LIMIT_MESSAGE =
 const OTP_TTL_MS = 15 * 60 * 1000;
 const otpStore = new Map();
 const pendingLoginPasswordStore = new Map();
+/** Contraseña del flujo /register guardada hasta verificar correo (para reenvíos OTP con sesión). */
+const pendingRegistrationPasswordStore = new Map();
 
 function normalizeEmail(email) {
   return (email || '').trim().toLowerCase();
@@ -182,6 +184,29 @@ function clearPendingLoginPassword(email) {
   pendingLoginPasswordStore.delete(normalizeEmail(email));
 }
 
+function savePendingRegistrationPassword(email, password) {
+  if (!password || typeof password !== 'string') return;
+  pendingRegistrationPasswordStore.set(normalizeEmail(email), {
+    password,
+    expiresAtMs: Date.now() + OTP_TTL_MS,
+  });
+}
+
+function getPendingRegistrationPassword(email) {
+  const key = normalizeEmail(email);
+  const entry = pendingRegistrationPasswordStore.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAtMs) {
+    pendingRegistrationPasswordStore.delete(key);
+    return null;
+  }
+  return entry.password;
+}
+
+function clearPendingRegistrationPassword(email) {
+  pendingRegistrationPasswordStore.delete(normalizeEmail(email));
+}
+
 async function sendOtpWithEmailJs(email, code, expiresAt) {
   const serviceId = process.env.EMAIL_SERVICE;
   const publicKey = process.env.EMAIL_KEY;
@@ -231,8 +256,12 @@ async function sendOtpWithEmailJs(email, code, expiresAt) {
 
 async function issueAndSendOtp(email, bootstrapPassword = null) {
   const code = generateOtpCode(6);
-  const fallbackPassword = bootstrapPassword || getPendingLoginPassword(email);
+  const fallbackPassword =
+    bootstrapPassword || getPendingRegistrationPassword(email) || getPendingLoginPassword(email);
   const expiresAt = saveOtp(email, code, fallbackPassword);
+  if (fallbackPassword) {
+    savePendingRegistrationPassword(normalizeEmail(email), fallbackPassword);
+  }
   await sendOtpWithEmailJs(email, code, expiresAt);
   return expiresAt;
 }
@@ -304,6 +333,7 @@ async function register(req, res) {
     });
 
     try {
+      savePendingRegistrationPassword(normalized, password);
       await issueAndSendOtp(normalized, password);
     } catch (mailErr) {
       console.error('[otp][register] failed to send OTP', {
@@ -346,7 +376,9 @@ async function verifyOtp(req, res) {
       const message =
         check.reason === 'expired'
           ? 'El código expiró. Solicita uno nuevo.'
-          : 'Código incorrecto.';
+          : check.reason === 'not_found'
+            ? 'Ese código ya no es válido (quizá expiró o el servidor se reinició). Pulsa «Reenviar código».'
+            : 'Código incorrecto.';
       return res.status(400).json({ error: message });
     }
 
@@ -379,7 +411,18 @@ async function verifyOtp(req, res) {
         userForPayload = signinData.user;
       }
     }
+    if (!session && check.bootstrapPassword) {
+      console.warn('[otp][verify] Supabase signIn failed after valid OTP', {
+        email: normalizeEmail(email),
+      });
+    }
+    if (!session && !check.bootstrapPassword) {
+      console.warn('[otp][verify] no bootstrap password; client must login manually', {
+        email: normalizeEmail(email),
+      });
+    }
     clearPendingLoginPassword(email);
+    clearPendingRegistrationPassword(email);
 
     const profile = session?.access_token
       ? await fetchProfileByUserWithJwt(existing.id, session.access_token)
