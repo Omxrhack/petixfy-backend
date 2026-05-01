@@ -2,6 +2,8 @@
  * Emergencias 24/7 (coordenadas + síntomas).
  */
 
+const { assignNearestOnDutyVet } = require('../services/assignEmergencyVet');
+
 async function createEmergency(req, res) {
   try {
     const { pet_id, symptoms, latitude, longitude, status } = req.body;
@@ -36,6 +38,12 @@ async function createEmergency(req, res) {
 
     if (error) {
       return res.status(400).json({ error: error.message, details: error });
+    }
+
+    const assignedId = await assignNearestOnDutyVet(data.id, lat, lng);
+
+    if (assignedId) {
+      return res.status(201).json({ ...data, assigned_vet_id: assignedId });
     }
 
     return res.status(201).json(data);
