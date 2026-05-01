@@ -7,7 +7,9 @@ const productsRoutes = require('./products.routes');
 const rewardsRoutes = require('./rewards.routes');
 const triageRoutes = require('./triage.routes');
 const trackingRoutes = require('./tracking.routes');
+const vetRoutes = require('./vet.routes');
 const authRoutes = require('./authRoutes');
+const { requireVet } = require('../middleware/requireVet');
 
 const router = Router();
 
@@ -19,5 +21,6 @@ router.use('/products', productsRoutes);
 router.use('/rewards', requireAuth, rewardsRoutes);
 router.use('/triage', requireAuth, triageRoutes);
 router.use('/tracking', requireAuth, trackingRoutes);
+router.use('/vet', requireAuth, requireVet, vetRoutes);
 
 module.exports = router;
