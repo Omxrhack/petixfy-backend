@@ -120,6 +120,7 @@ async function getDashboard(req, res) {
       .slice(0, 24)
       .map((a) => ({
         appointment_id: a.id,
+        pet_id: a.pet_id,
         scheduled_at: a.scheduled_at,
         status: a.status,
         pet_name: a.pets?.name ?? '',
