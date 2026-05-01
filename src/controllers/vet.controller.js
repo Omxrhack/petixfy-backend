@@ -13,11 +13,6 @@ function utcDayBounds(dateStr) {
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
-function todayUtcDateString() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/** Citas asignadas a este vet o en pool (sin vet_id, pendientes/confirmadas). */
 function filterAssignedAndPoolAppointments(rows, vetId) {
   return (rows ?? []).filter((a) => {
     if (a.vet_id === vetId) return true;
@@ -36,6 +31,56 @@ function haversineKm(lat1, lon1, lat2, lon2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+const APPOINTMENT_SELECT_VET =
+  'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
+
+/** Calendar day YYYY-MM-DD in America/Mexico_City (dashboard KPIs). */
+function mexicoCalendarDateStr(isoOrMs) {
+  const d = new Date(isoOrMs);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year').value;
+  const m = parts.find((p) => p.type === 'month').value;
+  const day = parts.find((p) => p.type === 'day').value;
+  return `${y}-${m}-${day}`;
+}
+
+function mexicoTodayStr() {
+  return mexicoCalendarDateStr(Date.now());
+}
+
+/** Default schedule window: ~24h ago through ~60 days ahead (app sends no date). */
+function defaultUpcomingWindowIsoBounds() {
+  const start = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const end = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+/**
+ * Appointments for vet agenda: pool + assigned to this vet. Prefer service role so nested
+ * pets/vet embeds are not stripped by RLS; .or + filterAssignedAndPoolAppointments enforce scope.
+ */
+async function fetchAppointmentsForVetAgenda(userSupabase, vetId, startIso, endIso) {
+  let client;
+  try {
+    client = createSupabaseServiceRoleClient();
+  } catch (_) {
+    client = userSupabase;
+  }
+
+  return client
+    .from('appointments')
+    .select(APPOINTMENT_SELECT_VET)
+    .gte('scheduled_at', startIso)
+    .lt('scheduled_at', endIso)
+    .order('scheduled_at', { ascending: true })
+    .or(`vet_id.eq.${vetId},vet_id.is.null`);
 }
 
 async function patchAvailability(req, res) {
@@ -72,8 +117,20 @@ async function getDashboard(req, res) {
       return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten() });
     }
 
-    const dateStr = parsed.data.date ?? todayUtcDateString();
-    const { startIso, endIso } = utcDayBounds(dateStr);
+    const explicitDate = parsed.data.date;
+    let dateStr;
+    let startIso;
+    let endIso;
+    let useMexicoDayKpi = false;
+
+    if (explicitDate) {
+      dateStr = explicitDate;
+      ({ startIso, endIso } = utcDayBounds(explicitDate));
+    } else {
+      useMexicoDayKpi = true;
+      dateStr = mexicoTodayStr();
+      ({ startIso, endIso } = defaultUpcomingWindowIsoBounds());
+    }
 
     const { data: vsRow, error: vsErr } = await req.supabase
       .from('vet_services')
@@ -91,16 +148,12 @@ async function getDashboard(req, res) {
       .eq('profile_id', vetId)
       .maybeSingle();
 
-    const appointmentSelect =
-      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
-
-    const { data: rawAppts, error: apptErr } = await req.supabase
-      .from('appointments')
-      .select(appointmentSelect)
-      .gte('scheduled_at', startIso)
-      .lt('scheduled_at', endIso)
-      .order('scheduled_at', { ascending: true })
-      .or(`vet_id.eq.${vetId},vet_id.is.null`);
+    const { data: rawAppts, error: apptErr } = await fetchAppointmentsForVetAgenda(
+      req.supabase,
+      vetId,
+      startIso,
+      endIso,
+    );
 
     if (apptErr) {
       return res.status(400).json({ error: apptErr.message, details: apptErr });
@@ -122,13 +175,27 @@ async function getDashboard(req, res) {
     }
 
     const pendingStatuses = new Set(['pending', 'confirmed']);
-    const pending_count = list.filter((a) => pendingStatuses.has(a.status)).length;
-    const earnings_mxn_today = list
-      .filter((a) => a.status === 'completed')
-      .reduce((sum, a) => sum + (Number(a.fee_mxn) || 0), 0);
+    const mexToday = mexicoTodayStr();
+
+    let pending_count;
+    let earnings_mxn_today;
+    if (useMexicoDayKpi) {
+      pending_count = list.filter(
+        (a) => pendingStatuses.has(a.status) && mexicoCalendarDateStr(a.scheduled_at) === mexToday,
+      ).length;
+      earnings_mxn_today = list
+        .filter((a) => a.status === 'completed' && mexicoCalendarDateStr(a.scheduled_at) === mexToday)
+        .reduce((sum, a) => sum + (Number(a.fee_mxn) || 0), 0);
+    } else {
+      pending_count = list.filter((a) => pendingStatuses.has(a.status)).length;
+      earnings_mxn_today = list
+        .filter((a) => a.status === 'completed')
+        .reduce((sum, a) => sum + (Number(a.fee_mxn) || 0), 0);
+    }
 
     const visits = list
       .filter((a) => pendingStatuses.has(a.status))
+      .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())
       .slice(0, 24)
       .map((a) => ({
         appointment_id: a.id,
@@ -165,19 +232,25 @@ async function getSchedule(req, res) {
       return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten() });
     }
 
-    const dateStr = parsed.data.date ?? todayUtcDateString();
-    const { startIso, endIso } = utcDayBounds(dateStr);
+    const explicitDate = parsed.data.date;
+    let dateStr;
+    let startIso;
+    let endIso;
 
-    const appointmentSelect =
-      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
+    if (explicitDate) {
+      dateStr = explicitDate;
+      ({ startIso, endIso } = utcDayBounds(explicitDate));
+    } else {
+      dateStr = mexicoTodayStr();
+      ({ startIso, endIso } = defaultUpcomingWindowIsoBounds());
+    }
 
-    const { data: rawAppts, error } = await req.supabase
-      .from('appointments')
-      .select(appointmentSelect)
-      .gte('scheduled_at', startIso)
-      .lt('scheduled_at', endIso)
-      .order('scheduled_at', { ascending: true })
-      .or(`vet_id.eq.${vetId},vet_id.is.null`);
+    const { data: rawAppts, error } = await fetchAppointmentsForVetAgenda(
+      req.supabase,
+      vetId,
+      startIso,
+      endIso,
+    );
 
     if (error) {
       return res.status(400).json({ error: error.message, details: error });
