@@ -1,4 +1,4 @@
--- Dueño puede ver datos básicos del veterinario asignado a sus citas (nombre, foto en join).
+-- Owner read-only: assigned veterinarian profile on own appointments / emergencies.
 
 DROP POLICY IF EXISTS profiles_select_assigned_vet_for_owner ON public.profiles;
 
