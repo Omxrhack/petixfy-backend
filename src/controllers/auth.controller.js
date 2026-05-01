@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { supabaseAnon } = require('../lib/supabaseAnon');
+const { safeBasename } = require('../lib/safeBasename');
 const { createSupabaseClientWithJwt } = require('../lib/supabaseUserClient');
 const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
 
@@ -60,7 +61,7 @@ async function fetchProfileByUserWithJwt(userId, accessToken) {
   const userClient = createSupabaseClientWithJwt(accessToken);
   const { data, error } = await userClient
     .from('profiles')
-    .select('id, role, full_name, phone, is_verified, onboarding_completed')
+    .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
     .eq('id', userId)
     .maybeSingle();
 
@@ -74,7 +75,7 @@ async function fetchProfileByUserWithServiceRole(userId) {
   const serviceClient = getServiceClient();
   const { data, error } = await serviceClient
     .from('profiles')
-    .select('id, role, full_name, phone, is_verified, onboarding_completed')
+    .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
     .eq('id', userId)
     .maybeSingle();
 
@@ -573,6 +574,49 @@ async function refreshSession(req, res) {
   }
 }
 
+/**
+ * Sube foto de perfil a Storage (bucket vetgo-images, carpeta = auth.uid) y actualiza profiles.avatar_url.
+ * Multipart campo `photo` (misma regla que mascotas).
+ */
+async function uploadProfileAvatar(req, res) {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: 'photo file is required (multipart field name: photo)' });
+    }
+
+    const userId = req.user.id;
+    const objectPath = `${userId}/profile/${Date.now()}-${safeBasename(req.file.originalname)}`;
+
+    const { error: uploadError } = await req.supabase.storage.from('vetgo-images').upload(objectPath, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: true,
+    });
+
+    if (uploadError) {
+      return res.status(400).json({ error: uploadError.message, details: uploadError });
+    }
+
+    const {
+      data: { publicUrl },
+    } = req.supabase.storage.from('vetgo-images').getPublicUrl(objectPath);
+
+    const { data, error } = await req.supabase
+      .from('profiles')
+      .update({ avatar_url: publicUrl })
+      .eq('id', userId)
+      .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to upload profile photo', details: err.message });
+  }
+}
+
 async function me(req, res) {
   try {
     const header = req.headers.authorization || '';
@@ -724,4 +768,5 @@ module.exports = {
   logout,
   refreshSession,
   me,
+  uploadProfileAvatar,
 };

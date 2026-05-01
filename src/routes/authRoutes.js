@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { requireAuth } = require('../middleware/requireAuth');
+const { uploadPetPhotoMiddleware } = require('../middleware/uploadPetPhoto');
 const { validateSchema } = require('../middleware/validateSchema');
 const {
   registerSchema,
@@ -17,6 +18,7 @@ const {
   login,
   refreshSession,
   me,
+  uploadProfileAvatar,
 } = require('../controllers/auth.controller');
 
 const router = Router();
@@ -27,6 +29,7 @@ router.post('/resend-otp', validateSchema(resendOtpSchema), resendOtp);
 router.post('/onboarding', requireAuth, validateSchema(onboardingSchema), completeOnboarding);
 router.post('/refresh', validateSchema(refreshSessionSchema), refreshSession);
 router.get('/me', requireAuth, me);
+router.post('/upload-photo', requireAuth, uploadPetPhotoMiddleware, uploadProfileAvatar);
 /**
  * @openapi
  * /api/auth/login:

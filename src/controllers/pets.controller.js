@@ -2,11 +2,7 @@
  * Mascotas: creación y listado por dueño (RLS en Supabase + comprobación de id).
  */
 
-function safeBasename(originalname) {
-  const base = (originalname || 'photo').split(/[/\\]/).pop() || 'photo';
-  const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, '_');
-  return (cleaned || 'photo').slice(0, 120);
-}
+const { safeBasename } = require('../lib/safeBasename');
 
 /**
  * Sube la imagen a Storage (bucket vetgo-images) y guarda la URL pública en pets.photo_url.
