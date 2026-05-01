@@ -682,8 +682,12 @@ async function me(req, res) {
 async function login(req, res) {
   try {
     const { email, password } = req.body;
+    const normalized = normalizeEmail(email);
 
-    const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabaseAnon.auth.signInWithPassword({
+      email: normalized,
+      password,
+    });
 
     if (error) {
       const message = (error.message || '').toLowerCase();
@@ -693,7 +697,7 @@ async function login(req, res) {
         message.includes('email_not_confirmed');
 
       if (emailNotConfirmed) {
-        savePendingLoginPassword(email, password);
+        savePendingLoginPassword(normalized, password);
         // Avisamos al cliente para que vaya a la pantalla de OTP. El reenvío
         // se hace solo si el usuario lo solicita explícitamente (desde OtpScreen).
         return res.status(403).json({
@@ -702,7 +706,7 @@ async function login(req, res) {
           code: 'EMAIL_NOT_CONFIRMED',
           verification_required: true,
           resent: false,
-          user: { email },
+          user: { email: normalized },
         });
       }
 
@@ -720,7 +724,21 @@ async function login(req, res) {
       return res.status(401).json({ error: 'Invalid login credentials' });
     }
 
-    const profile = await fetchProfileByUserWithJwt(data.user.id, data.session.access_token);
+    // Lectura con service role: evita fallos 500 si RLS bloquea el primer SELECT con JWT recién emitido.
+    let profile;
+    try {
+      profile = await fetchProfileByUserWithServiceRole(data.user.id);
+    } catch (profileErr) {
+      console.error('[auth][login] profile fetch failed', {
+        userId: data.user.id,
+        message: profileErr.message,
+      });
+      return res.status(500).json({
+        error: 'No se pudo cargar tu perfil. Intenta de nuevo.',
+        details: profileErr.message,
+      });
+    }
+
     const profileVerified = profile?.is_verified ?? false;
     if (!profileVerified) {
       return res.status(403).json({
@@ -728,7 +746,7 @@ async function login(req, res) {
         code: 'EMAIL_NOT_CONFIRMED',
         verification_required: true,
         resent: false,
-        user: { email },
+        user: { email: normalized },
       });
     }
 
@@ -741,6 +759,7 @@ async function login(req, res) {
       profile,
     });
   } catch (err) {
+    console.error('[auth][login] unexpected', err);
     return res.status(500).json({ error: 'Failed to login user', details: err.message });
   }
 }
