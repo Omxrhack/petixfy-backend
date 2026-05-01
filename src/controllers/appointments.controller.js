@@ -55,4 +55,37 @@ async function createAppointment(req, res) {
   }
 }
 
-module.exports = { createAppointment };
+async function listMyAppointments(req, res) {
+  try {
+    const ownerId = req.user.id;
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .select(
+        'id, vet_id, scheduled_at, status, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
+      )
+      .eq('owner_id', ownerId)
+      .order('scheduled_at', { ascending: true })
+      .limit(80);
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    const appointments = (data ?? []).map((a) => ({
+      id: a.id,
+      vet_id: a.vet_id,
+      scheduled_at: a.scheduled_at,
+      status: a.status,
+      notes: a.notes,
+      pet: a.pets,
+      vet: a.vet ?? null,
+    }));
+
+    return res.json({ appointments });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to list appointments', details: err.message });
+  }
+}
+
+module.exports = { createAppointment, listMyAppointments };

@@ -92,7 +92,7 @@ async function getDashboard(req, res) {
       .maybeSingle();
 
     const appointmentSelect =
-      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url)';
+      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
 
     const { data: rawAppts, error: apptErr } = await req.supabase
       .from('appointments')
@@ -133,6 +133,9 @@ async function getDashboard(req, res) {
       .map((a) => ({
         appointment_id: a.id,
         pet_id: a.pet_id,
+        vet_id: a.vet_id,
+        vet_name: a.vet?.full_name ?? '',
+        vet_avatar_url: a.vet?.avatar_url ?? null,
         scheduled_at: a.scheduled_at,
         status: a.status,
         pet_name: a.pets?.name ?? '',
@@ -166,7 +169,7 @@ async function getSchedule(req, res) {
     const { startIso, endIso } = utcDayBounds(dateStr);
 
     const appointmentSelect =
-      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url)';
+      'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
 
     const { data: rawAppts, error } = await req.supabase
       .from('appointments')
@@ -204,6 +207,7 @@ async function getSchedule(req, res) {
       fee_mxn: a.fee_mxn,
       owner_id: a.owner_id,
       pet: a.pets,
+      vet: a.vet ?? null,
       client_address: detailsMap[a.owner_id] ?? null,
     }));
 
