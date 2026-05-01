@@ -107,6 +107,7 @@ const RATE_LIMIT_MESSAGE =
 
 const OTP_TTL_MS = 15 * 60 * 1000;
 const otpStore = new Map();
+const pendingLoginPasswordStore = new Map();
 
 function normalizeEmail(email) {
   return (email || '').trim().toLowerCase();
@@ -133,9 +134,13 @@ function otpExpiryLabel(date) {
   }
 }
 
-function saveOtp(email, code) {
+function saveOtp(email, code, bootstrapPassword = null) {
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
-  otpStore.set(normalizeEmail(email), { code, expiresAtMs: expiresAt.getTime() });
+  otpStore.set(normalizeEmail(email), {
+    code,
+    expiresAtMs: expiresAt.getTime(),
+    bootstrapPassword: bootstrapPassword || null,
+  });
   return expiresAt;
 }
 
@@ -151,7 +156,29 @@ function verifyStoredOtp(email, code) {
     return { ok: false, reason: 'invalid' };
   }
   otpStore.delete(key);
-  return { ok: true };
+  return { ok: true, bootstrapPassword: entry.bootstrapPassword ?? null };
+}
+
+function savePendingLoginPassword(email, password) {
+  pendingLoginPasswordStore.set(normalizeEmail(email), {
+    password,
+    expiresAtMs: Date.now() + OTP_TTL_MS,
+  });
+}
+
+function getPendingLoginPassword(email) {
+  const key = normalizeEmail(email);
+  const entry = pendingLoginPasswordStore.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAtMs) {
+    pendingLoginPasswordStore.delete(key);
+    return null;
+  }
+  return entry.password;
+}
+
+function clearPendingLoginPassword(email) {
+  pendingLoginPasswordStore.delete(normalizeEmail(email));
 }
 
 async function sendOtpWithEmailJs(email, code, expiresAt) {
@@ -183,13 +210,28 @@ async function sendOtpWithEmailJs(email, code, expiresAt) {
 
   if (!response.ok) {
     const details = await response.text().catch(() => '');
+    console.error('[otp][emailjs] send failed', {
+      status: response.status,
+      email,
+      templateId,
+      serviceId,
+      details: details || null,
+    });
     throw new Error(`Email provider rejected OTP send (${response.status}): ${details || 'unknown error'}`);
   }
+
+  console.log('[otp][emailjs] sent', {
+    email,
+    templateId,
+    serviceId,
+    expiresAt: expiresAt.toISOString(),
+  });
 }
 
-async function issueAndSendOtp(email) {
+async function issueAndSendOtp(email, bootstrapPassword = null) {
   const code = generateOtpCode(6);
-  const expiresAt = saveOtp(email, code);
+  const fallbackPassword = bootstrapPassword || getPendingLoginPassword(email);
+  const expiresAt = saveOtp(email, code, fallbackPassword);
   await sendOtpWithEmailJs(email, code, expiresAt);
   return expiresAt;
 }
@@ -261,8 +303,12 @@ async function register(req, res) {
     });
 
     try {
-      await issueAndSendOtp(normalized);
+      await issueAndSendOtp(normalized, password);
     } catch (mailErr) {
+      console.error('[otp][register] failed to send OTP', {
+        email: normalized,
+        error: mailErr.message,
+      });
       return res.status(500).json({
         error: 'No se pudo enviar el código de verificación',
         details: mailErr.message,
@@ -292,6 +338,10 @@ async function verifyOtp(req, res) {
     const { email, token } = req.body;
     const check = verifyStoredOtp(email, token);
     if (!check.ok) {
+      console.warn('[otp][verify] invalid attempt', {
+        email: normalizeEmail(email),
+        reason: check.reason,
+      });
       const message =
         check.reason === 'expired'
           ? 'El código expiró. Solicita uno nuevo.'
@@ -316,14 +366,30 @@ async function verifyOtp(req, res) {
       is_verified: true,
     });
 
-    const profile = await fetchProfileByUserWithServiceRole(existing.id);
+    let session = null;
+    let userForPayload = existing;
+    if (check.bootstrapPassword) {
+      const { data: signinData, error: signinError } = await supabaseAnon.auth.signInWithPassword({
+        email: normalizeEmail(email),
+        password: check.bootstrapPassword,
+      });
+      if (!signinError && signinData?.session && signinData?.user) {
+        session = signinData.session;
+        userForPayload = signinData.user;
+      }
+    }
+    clearPendingLoginPassword(email);
+
+    const profile = session?.access_token
+      ? await fetchProfileByUserWithJwt(existing.id, session.access_token)
+      : await fetchProfileByUserWithServiceRole(existing.id);
 
     return res.json({
-      access_token: null,
-      refresh_token: null,
-      expires_in: null,
-      token_type: null,
-      user: userPayload(existing, profile),
+      access_token: session?.access_token ?? null,
+      refresh_token: session?.refresh_token ?? null,
+      expires_in: session?.expires_in ?? null,
+      token_type: session?.token_type ?? null,
+      user: userPayload(userForPayload, profile),
       profile,
     });
   } catch (err) {
@@ -540,6 +606,7 @@ async function login(req, res) {
         message.includes('email_not_confirmed');
 
       if (emailNotConfirmed) {
+        savePendingLoginPassword(email, password);
         // Avisamos al cliente para que vaya a la pantalla de OTP. El reenvío
         // se hace solo si el usuario lo solicita explícitamente (desde OtpScreen).
         return res.status(403).json({
@@ -628,6 +695,10 @@ async function resendOtp(req, res) {
     try {
       await issueAndSendOtp(normalized);
     } catch (mailErr) {
+      console.error('[otp][resend] failed to send OTP', {
+        email: normalized,
+        error: mailErr.message,
+      });
       return res.status(500).json({
         error: 'No se pudo reenviar el código de verificación',
         details: mailErr.message,
