@@ -109,7 +109,7 @@ async function getMyVet(req, res) {
     const { data, error } = await req.supabase
       .from('appointments')
       .select(
-        'vet_id, scheduled_at, vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url), vet_services(specialty)',
+        'vet_id, scheduled_at, vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, vet_services(specialty))',
       )
       .eq('owner_id', ownerId)
       .not('vet_id', 'is', null)
@@ -126,7 +126,7 @@ async function getMyVet(req, res) {
           count: 0,
           first: a.scheduled_at,
           vet: a.vet,
-          specialty: a.vet_services?.[0]?.specialty ?? null,
+          specialty: a.vet?.vet_services?.[0]?.specialty ?? null,
         };
       }
       freq[id].count++;
