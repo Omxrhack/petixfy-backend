@@ -11,10 +11,13 @@ const vetRoutes = require('./vet.routes');
 const vetsCatalogRoutes = require('./vets.routes');
 const authRoutes = require('./authRoutes');
 const { requireVet } = require('../middleware/requireVet');
+const socialRoutes = require('./social.routes');
 
 const router = Router();
 
 router.use('/auth', authRoutes);
+// Social: profiles, follows, posts, reviews (mixed auth — each route decides)
+router.use('/', socialRoutes);
 router.use('/vets', requireAuth, vetsCatalogRoutes);
 router.use('/pets', requireAuth, petsRoutes);
 router.use('/appointments', requireAuth, appointmentsRoutes);
