@@ -3,7 +3,13 @@ const { followSchema, createPostSchema, createReviewSchema, updateProfileSchema 
 
 // Returns true when the error is "table not yet migrated" (schema cache miss)
 function _isMissingTable(error) {
-  return error?.message?.includes('schema cache') || error?.message?.includes('Could not find');
+  if (!error) return false;
+  const msg = [error.message, error.details, error.hint].filter(Boolean).join(' ');
+  return (
+    msg.includes('schema cache')
+    || msg.includes('Could not find')
+    || msg.includes('does not exist')
+  );
 }
 
 // ─── Public profile ──────────────────────────────────────────────────────────
@@ -237,7 +243,15 @@ async function createPost(req, res) {
       .select('id, body, image_urls, created_at, author:profiles!posts_author_id_fkey(id, full_name, avatar_url)')
       .single();
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      if (_isMissingTable(error)) {
+        return res.status(503).json({
+          error:
+            'La tabla de publicaciones aún no está en la base de datos. Aplica la migración social en Supabase (vetgo_social_module).',
+        });
+      }
+      return res.status(400).json({ error: error.message });
+    }
 
     return res.status(201).json(_mapPost(data));
   } catch (err) {
