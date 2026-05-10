@@ -30,10 +30,15 @@ const updateProfileSchema = z.object({
   years_experience: z.number().int().min(0).max(60).optional(),
 });
 
+const createPostCommentSchema = z.object({
+  body: z.string().trim().min(1, 'El comentario no puede estar vacío').max(2000),
+});
+
 module.exports = {
   followSchema,
   createPostSchema,
   createRepostSchema,
   createReviewSchema,
   updateProfileSchema,
+  createPostCommentSchema,
 };

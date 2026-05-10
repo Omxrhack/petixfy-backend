@@ -13,6 +13,9 @@ const {
   updateProfile,
   getSuggestions,
   getExplorePosts,
+  togglePostLike,
+  getPostComments,
+  createPostComment,
 } = require('../controllers/social.controller');
 
 const router = Router();
@@ -31,7 +34,10 @@ router.patch('/profiles/me', requireAuth, updateProfile);
 router.post('/follows', requireAuth, followUser);
 router.delete('/follows/:following_id', requireAuth, unfollowUser);
 
-// Posts — /posts/:id/repost antes que rutas ambiguas
+// Posts — rutas con :id antes del listado genérico
+router.post('/posts/:id/like', requireAuth, togglePostLike);
+router.get('/posts/:id/comments', requireAuth, getPostComments);
+router.post('/posts/:id/comments', requireAuth, createPostComment);
 router.get('/posts', requireAuth, getFeed);
 router.post('/posts', requireAuth, createPost);
 router.post('/posts/:id/repost', requireAuth, createRepost);

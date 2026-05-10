@@ -5,6 +5,7 @@ const {
   createRepostSchema,
   createReviewSchema,
   updateProfileSchema,
+  createPostCommentSchema,
 } = require('../schemas/social.schema');
 
 // Returns true when the error is "table not yet migrated" (schema cache miss)
@@ -16,6 +17,49 @@ function _isMissingTable(error) {
     || msg.includes('Could not find')
     || msg.includes('does not exist')
   );
+}
+
+async function _optionalUserIdFromReq(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.slice('Bearer '.length).trim();
+  if (!token) return null;
+  try {
+    const { createSupabaseClientWithJwt } = require('../lib/supabaseUserClient');
+    const userClient = createSupabaseClientWithJwt(token);
+    const { data: { user } } = await userClient.auth.getUser();
+    return user?.id ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Enriquece `{ post }` de cada entrada con conteos / flags del visor (explore y fallbacks). */
+async function _mergeEngagementForPosts(req, entries) {
+  const me = req.user?.id;
+  if (!me || !Array.isArray(entries) || !entries.length) return;
+  const ids = [...new Set(entries.map((e) => e.post?.id).filter(Boolean))];
+  if (!ids.length) return;
+  const { data, error } = await req.supabase.rpc('post_engagement_batch', {
+    p_viewer: me,
+    p_post_ids: ids,
+  });
+  if (error || !Array.isArray(data)) return;
+  const map = new Map(data.map((row) => [row.post_id, row]));
+  for (const e of entries) {
+    const pid = e.post?.id;
+    if (!pid || !e.post) continue;
+    const row = map.get(pid);
+    if (!row) continue;
+    e.post = {
+      ...e.post,
+      like_count: row.like_count,
+      comment_count: row.comment_count,
+      viewer_has_liked: row.viewer_has_liked,
+      repost_count: row.repost_count,
+      viewer_has_reposted: row.viewer_has_reposted,
+    };
+  }
 }
 
 // ─── Public profile ──────────────────────────────────────────────────────────
@@ -244,6 +288,7 @@ async function getFeed(req, res) {
       created_at: p.created_at,
       post: _mapPost(p),
     }));
+    await _mergeEngagementForPosts(req, posts);
     return res.json({ posts, page, has_more: posts.length === limit });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch feed', details: err.message });
@@ -273,11 +318,13 @@ async function createPost(req, res) {
       return res.status(400).json({ error: error.message });
     }
 
-    return res.status(201).json({
+    const row = {
       feed_kind: 'post',
       created_at: data.created_at,
       post: _mapPost(data),
-    });
+    };
+    await _mergeEngagementForPosts(req, [row]);
+    return res.status(201).json(row);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create post', details: err.message });
   }
@@ -326,14 +373,18 @@ async function createRepost(req, res) {
         .maybeSingle(),
     ]);
 
-    return res.status(201).json({
+    const payload = {
       feed_kind: 'repost',
       created_at: inserted.created_at,
       repost_id: inserted.id,
       quote_body: inserted.quote_body ?? null,
       reposter: reposter ?? null,
       post: original ? _mapPost(original) : null,
-    });
+    };
+    if (payload.post) {
+      await _mergeEngagementForPosts(req, [payload]);
+    }
+    return res.status(201).json(payload);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create repost', details: err.message });
   }
@@ -346,11 +397,14 @@ async function getUserPosts(req, res) {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
     const offset = (page - 1) * limit;
 
+    const viewerId = await _optionalUserIdFromReq(req);
+
     const service = createSupabaseServiceRoleClient();
     const { data: rpcData, error: rpcErr } = await service.rpc('social_profile_feed_items', {
       p_profile: id,
       p_limit: limit,
       p_offset: offset,
+      p_viewer: viewerId,
     });
 
     if (!rpcErr && Array.isArray(rpcData)) {
@@ -375,6 +429,8 @@ async function getUserPosts(req, res) {
       created_at: p.created_at,
       post: _mapPost(p),
     }));
+    const reqLike = { ...req, user: viewerId ? { id: viewerId } : req.user };
+    await _mergeEngagementForPosts(reqLike, posts);
     return res.json({ posts, page, has_more: posts.length === limit });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch user posts', details: err.message });
