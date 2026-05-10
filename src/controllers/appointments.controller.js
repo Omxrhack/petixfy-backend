@@ -102,4 +102,50 @@ async function listMyAppointments(req, res) {
   }
 }
 
-module.exports = { createAppointment, listMyAppointments };
+async function getMyVet(req, res) {
+  try {
+    const ownerId = req.user.id;
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .select(
+        'vet_id, scheduled_at, vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url), vet_services(specialty)',
+      )
+      .eq('owner_id', ownerId)
+      .not('vet_id', 'is', null)
+      .order('scheduled_at', { ascending: true });
+
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data?.length) return res.json({ vet: null });
+
+    const freq = {};
+    for (const a of data) {
+      const id = a.vet_id;
+      if (!freq[id]) {
+        freq[id] = {
+          count: 0,
+          first: a.scheduled_at,
+          vet: a.vet,
+          specialty: a.vet_services?.[0]?.specialty ?? null,
+        };
+      }
+      freq[id].count++;
+    }
+
+    const primary = Object.values(freq).sort((a, b) => b.count - a.count)[0];
+
+    return res.json({
+      vet: {
+        id: primary.vet.id,
+        full_name: primary.vet.full_name,
+        avatar_url: primary.vet.avatar_url,
+        specialty: primary.specialty,
+        relationship_since: primary.first,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to get assigned vet', details: err.message });
+  }
+}
+
+module.exports = { createAppointment, listMyAppointments, getMyVet };
