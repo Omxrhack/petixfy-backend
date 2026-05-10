@@ -1,10 +1,12 @@
 const { Router } = require('express');
 const { requireAuth } = require('../middleware/requireAuth');
+const { uploadPetPhotoMiddleware } = require('../middleware/uploadPetPhoto');
 const {
   getProfile,
   followUser,
   unfollowUser,
   getFeed,
+  uploadPostImage,
   createPost,
   createRepost,
   getUserPosts,
@@ -33,6 +35,9 @@ router.patch('/profiles/me', requireAuth, updateProfile);
 // Follows
 router.post('/follows', requireAuth, followUser);
 router.delete('/follows/:following_id', requireAuth, unfollowUser);
+
+// Posts — subida de adjuntos (antes de rutas con :id por claridad)
+router.post('/posts/upload-image', requireAuth, uploadPetPhotoMiddleware, uploadPostImage);
 
 // Posts — rutas con :id antes del listado genérico
 router.post('/posts/:id/like', requireAuth, togglePostLike);

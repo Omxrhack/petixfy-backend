@@ -4,10 +4,14 @@ const followSchema = z.object({
   following_id: z.string().uuid('following_id must be a valid UUID'),
 });
 
-const createPostSchema = z.object({
-  body: z.string().trim().min(1, 'body is required').max(2000),
-  image_urls: z.array(z.string().url()).optional().default([]),
-});
+const createPostSchema = z
+  .object({
+    body: z.string().trim().max(2000),
+    image_urls: z.array(z.string().url()).max(4).optional().default([]),
+  })
+  .refine((d) => d.body.length > 0 || d.image_urls.length > 0, {
+    message: 'Se requiere texto o al menos una imagen',
+  });
 
 const createRepostSchema = z.object({
   quote_body: z

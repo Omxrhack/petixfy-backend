@@ -1,4 +1,5 @@
 const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
+const { safeBasename } = require('../lib/safeBasename');
 const {
   followSchema,
   createPostSchema,
@@ -292,6 +293,40 @@ async function getFeed(req, res) {
     return res.json({ posts, page, has_more: posts.length === limit });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch feed', details: err.message });
+  }
+}
+
+/**
+ * Sube una imagen para adjuntarla a una publicación (bucket vetgo-images, carpeta `{uid}/posts/`).
+ * Respuesta: `{ url }` — misma convención que avatar/mascotas.
+ */
+async function uploadPostImage(req, res) {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: 'photo file is required (multipart field name: photo)' });
+    }
+
+    const userId = req.user.id;
+    const objectPath = `${userId}/posts/${Date.now()}-${safeBasename(req.file.originalname)}`;
+
+    const { error: uploadError } = await req.supabase.storage
+      .from('vetgo-images')
+      .upload(objectPath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return res.status(400).json({ error: uploadError.message, details: uploadError });
+    }
+
+    const {
+      data: { publicUrl },
+    } = req.supabase.storage.from('vetgo-images').getPublicUrl(objectPath);
+
+    return res.json({ url: publicUrl });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to upload image', details: err.message });
   }
 }
 
@@ -827,6 +862,7 @@ module.exports = {
   followUser,
   unfollowUser,
   getFeed,
+  uploadPostImage,
   createPost,
   createRepost,
   getUserPosts,
