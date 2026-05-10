@@ -10,79 +10,109 @@ async function getProfile(req, res) {
 
     const { data: profile, error: profileErr } = await service
       .from('profiles')
-      .select('id, full_name, avatar_url, bio, location, role')
+      .select('id, full_name, avatar_url, role')
       .eq('id', id)
       .maybeSingle();
+
+    // bio & location require migration 001_social_module.sql — fetch separately so missing columns don't crash the endpoint
+    let bio = null;
+    let location = null;
+    try {
+      const { data: extra } = await service
+        .from('profiles')
+        .select('bio, location')
+        .eq('id', id)
+        .maybeSingle();
+      if (extra) {
+        bio = extra.bio ?? null;
+        location = extra.location ?? null;
+      }
+    } catch (_) { /* columns not yet migrated */ }
 
     if (profileErr) return res.status(400).json({ error: profileErr.message });
     if (!profile) return res.status(404).json({ error: 'Profile not found' });
 
-    // Follower / following counts
-    const [{ count: followersCount }, { count: followingCount }] = await Promise.all([
-      service.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', id),
-      service.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', id),
-    ]);
-
-    // Optional: is the caller following this profile?
+    // Follower / following counts — requires migration (tables may not exist yet)
+    let followersCount = 0;
+    let followingCount = 0;
     let isFollowing = false;
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.slice('Bearer '.length).trim();
-      if (token) {
-        const { createSupabaseClientWithJwt } = require('../lib/supabaseUserClient');
-        const userClient = createSupabaseClientWithJwt(token);
-        const { data: { user } } = await userClient.auth.getUser();
-        if (user) {
-          const { data: follow } = await service
-            .from('follows')
-            .select('id')
-            .eq('follower_id', user.id)
-            .eq('following_id', id)
-            .maybeSingle();
-          isFollowing = !!follow;
+    try {
+      const [f1, f2] = await Promise.all([
+        service.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', id),
+        service.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', id),
+      ]);
+      followersCount = f1.count ?? 0;
+      followingCount = f2.count ?? 0;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.slice('Bearer '.length).trim();
+        if (token) {
+          const { createSupabaseClientWithJwt } = require('../lib/supabaseUserClient');
+          const userClient = createSupabaseClientWithJwt(token);
+          const { data: { user } } = await userClient.auth.getUser();
+          if (user) {
+            const { data: follow } = await service
+              .from('follows')
+              .select('id')
+              .eq('follower_id', user.id)
+              .eq('following_id', id)
+              .maybeSingle();
+            isFollowing = !!follow;
+          }
         }
       }
-    }
+    } catch (_) { /* follows table not yet migrated */ }
 
     let vetData = null;
     if (profile.role === 'vet') {
-      const [
-        { data: vetService },
-        { count: completedAppts },
-        { data: ratingData },
-        { data: uniquePetsData },
-        { count: postsCount },
-      ] = await Promise.all([
-        service
-          .from('vet_services')
-          .select('specialty, years_experience')
-          .eq('profile_id', id)
-          .maybeSingle(),
-        service
-          .from('appointments')
-          .select('*', { count: 'exact', head: true })
-          .eq('vet_id', id)
-          .eq('status', 'completed'),
-        service.from('reviews').select('rating').eq('reviewee_id', id),
-        service.from('appointments').select('pet_id').eq('vet_id', id).eq('status', 'completed'),
-        service.from('posts').select('*', { count: 'exact', head: true }).eq('author_id', id),
-      ]);
+      // vet_services always exists; reviews/posts require migration
+      const { data: vetService } = await service
+        .from('vet_services')
+        .select('specialty, years_experience')
+        .eq('profile_id', id)
+        .maybeSingle();
 
-      const ratings = (ratingData ?? []).map((r) => r.rating);
-      const avgRating = ratings.length
-        ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1)
-        : null;
+      const { count: completedAppts } = await service
+        .from('appointments')
+        .select('*', { count: 'exact', head: true })
+        .eq('vet_id', id)
+        .eq('status', 'completed');
+
+      const { data: uniquePetsData } = await service
+        .from('appointments')
+        .select('pet_id')
+        .eq('vet_id', id)
+        .eq('status', 'completed');
 
       const uniquePets = new Set((uniquePetsData ?? []).map((a) => a.pet_id)).size;
+
+      // reviews & posts require migration
+      let avgRating = null;
+      let ratingCount = 0;
+      let postsCount = 0;
+      try {
+        const { data: ratingData } = await service.from('reviews').select('rating').eq('reviewee_id', id);
+        const ratings = (ratingData ?? []).map((r) => r.rating);
+        ratingCount = ratings.length;
+        avgRating = ratings.length
+          ? parseFloat((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1))
+          : null;
+      } catch (_) { /* reviews table not yet migrated */ }
+
+      try {
+        const { count } = await service.from('posts').select('*', { count: 'exact', head: true }).eq('author_id', id);
+        postsCount = count ?? 0;
+      } catch (_) { /* posts table not yet migrated */ }
 
       vetData = {
         specialty: vetService?.specialty ?? null,
         years_experience: vetService?.years_experience ?? null,
-        avg_rating: avgRating ? parseFloat(avgRating) : null,
-        rating_count: ratings.length,
+        avg_rating: avgRating,
+        rating_count: ratingCount,
         completed_appointments: completedAppts ?? 0,
         unique_pets: uniquePets,
-        posts_count: postsCount ?? 0,
+        posts_count: postsCount,
       };
     }
 
@@ -90,8 +120,8 @@ async function getProfile(req, res) {
       id: profile.id,
       full_name: profile.full_name,
       avatar_url: profile.avatar_url,
-      bio: profile.bio ?? null,
-      location: profile.location ?? null,
+      bio: bio,
+      location: location,
       role: profile.role,
       followers_count: followersCount ?? 0,
       following_count: followingCount ?? 0,
