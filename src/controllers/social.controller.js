@@ -1,6 +1,11 @@
 const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
 const { followSchema, createPostSchema, createReviewSchema, updateProfileSchema } = require('../schemas/social.schema');
 
+// Returns true when the error is "table not yet migrated" (schema cache miss)
+function _isMissingTable(error) {
+  return error?.message?.includes('schema cache') || error?.message?.includes('Could not find');
+}
+
 // ─── Public profile ──────────────────────────────────────────────────────────
 
 async function getProfile(req, res) {
@@ -207,7 +212,10 @@ async function getFeed(req, res) {
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      if (_isMissingTable(error)) return res.json({ posts: [], page, has_more: false });
+      return res.status(400).json({ error: error.message });
+    }
 
     const posts = (data ?? []).map(_mapPost);
     return res.json({ posts, page, has_more: posts.length === limit });
@@ -252,7 +260,10 @@ async function getUserPosts(req, res) {
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      if (_isMissingTable(error)) return res.json({ posts: [], page, has_more: false });
+      return res.status(400).json({ error: error.message });
+    }
 
     const posts = (data ?? []).map(_mapPost);
     return res.json({ posts, page, has_more: posts.length === limit });
@@ -290,6 +301,7 @@ async function createReview(req, res) {
       .single();
 
     if (error) {
+      if (_isMissingTable(error)) return res.status(503).json({ error: 'Reviews not available yet' });
       if (error.code === '23505') return res.status(409).json({ error: 'Already reviewed this appointment' });
       return res.status(400).json({ error: error.message });
     }
@@ -315,7 +327,10 @@ async function getProfileReviews(req, res) {
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      if (_isMissingTable(error)) return res.json({ reviews: [], page, has_more: false });
+      return res.status(400).json({ error: error.message });
+    }
 
     const reviews = (data ?? []).map((r) => ({
       id: r.id,
