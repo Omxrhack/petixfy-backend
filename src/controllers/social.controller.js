@@ -611,9 +611,157 @@ async function getExplorePosts(req, res) {
       created_at: p.created_at,
       post: _mapPost(p),
     }));
+    await _mergeEngagementForPosts(req, posts);
     return res.json({ posts });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch explore posts', details: err.message });
+  }
+}
+
+// ─── Post likes / comments ───────────────────────────────────────────────────
+
+async function togglePostLike(req, res) {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+
+    const { data: existsRow, error: existsErr } = await req.supabase
+      .from('posts')
+      .select('id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (existsErr && !_isMissingTable(existsErr)) return res.status(400).json({ error: existsErr.message });
+    if (!existsRow) return res.status(404).json({ error: 'Post not found' });
+
+    const { data: existing } = await req.supabase
+      .from('post_likes')
+      .select('post_id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existing) {
+      const { error: delErr } = await req.supabase
+        .from('post_likes')
+        .delete()
+        .eq('post_id', postId)
+        .eq('user_id', userId);
+      if (delErr) {
+        if (_isMissingTable(delErr)) return res.status(503).json({ error: 'Me gusta no disponibles aún.' });
+        return res.status(400).json({ error: delErr.message });
+      }
+    } else {
+      const { error: insErr } = await req.supabase
+        .from('post_likes')
+        .insert({ post_id: postId, user_id: userId });
+      if (insErr) {
+        if (_isMissingTable(insErr)) return res.status(503).json({ error: 'Me gusta no disponibles aún.' });
+        return res.status(400).json({ error: insErr.message });
+      }
+    }
+
+    const { data: batch } = await req.supabase.rpc('post_engagement_batch', {
+      p_viewer: userId,
+      p_post_ids: [postId],
+    });
+    const row = Array.isArray(batch) ? batch[0] : null;
+
+    return res.json({
+      liked: row?.viewer_has_liked ?? false,
+      like_count: row?.like_count ?? 0,
+      viewer_has_liked: row?.viewer_has_liked ?? false,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to toggle like', details: err.message });
+  }
+}
+
+async function getPostComments(req, res) {
+  try {
+    const postId = req.params.id;
+    const page = Math.max(1, parseInt(req.query.page ?? '1', 10));
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit ?? '30', 10)));
+    const offset = (page - 1) * limit;
+
+    const { data, error } = await req.supabase
+      .from('post_comments')
+      .select(`
+        id,
+        body,
+        created_at,
+        author:profiles!post_comments_author_id_fkey(id, full_name, avatar_url)
+      `)
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      if (_isMissingTable(error)) return res.json({ comments: [], page, has_more: false });
+      return res.status(400).json({ error: error.message });
+    }
+
+    const comments = (data ?? []).map((c) => ({
+      id: c.id,
+      body: c.body,
+      created_at: c.created_at,
+      author: c.author ?? null,
+    }));
+
+    return res.json({ comments, page, has_more: comments.length === limit });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to fetch comments', details: err.message });
+  }
+}
+
+async function createPostComment(req, res) {
+  try {
+    const parsed = createPostCommentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+
+    const postId = req.params.id;
+    const { data: existsRow, error: existsErr } = await req.supabase
+      .from('posts')
+      .select('id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (existsErr && !_isMissingTable(existsErr)) return res.status(400).json({ error: existsErr.message });
+    if (!existsRow) return res.status(404).json({ error: 'Post not found' });
+
+    const { data, error } = await req.supabase
+      .from('post_comments')
+      .insert({ post_id: postId, author_id: req.user.id, body: parsed.data.body })
+      .select(`
+        id,
+        body,
+        created_at,
+        author:profiles!post_comments_author_id_fkey(id, full_name, avatar_url)
+      `)
+      .single();
+
+    if (error) {
+      if (_isMissingTable(error)) return res.status(503).json({ error: 'Comentarios no disponibles aún.' });
+      return res.status(400).json({ error: error.message });
+    }
+
+    const { data: batch } = await req.supabase.rpc('post_engagement_batch', {
+      p_viewer: req.user.id,
+      p_post_ids: [postId],
+    });
+    const commentCount = Array.isArray(batch) && batch[0] ? batch[0].comment_count : null;
+
+    return res.status(201).json({
+      comment: {
+        id: data.id,
+        body: data.body,
+        created_at: data.created_at,
+        author: data.author ?? null,
+      },
+      comment_count: commentCount,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to create comment', details: err.message });
   }
 }
 
@@ -626,6 +774,11 @@ function _mapPost(p) {
     image_urls: p.image_urls ?? [],
     created_at: p.created_at,
     author: p.author ?? null,
+    like_count: p.like_count ?? 0,
+    comment_count: p.comment_count ?? 0,
+    viewer_has_liked: p.viewer_has_liked ?? false,
+    repost_count: p.repost_count ?? 0,
+    viewer_has_reposted: p.viewer_has_reposted ?? false,
   };
 }
 
@@ -661,6 +814,11 @@ function _coercePostRow(post) {
     image_urls: Array.isArray(post.image_urls) ? post.image_urls : [],
     created_at: post.created_at,
     author: post.author ?? null,
+    like_count: post.like_count ?? 0,
+    comment_count: post.comment_count ?? 0,
+    viewer_has_liked: post.viewer_has_liked ?? false,
+    repost_count: post.repost_count ?? 0,
+    viewer_has_reposted: post.viewer_has_reposted ?? false,
   };
 }
 
@@ -677,4 +835,7 @@ module.exports = {
   updateProfile,
   getSuggestions,
   getExplorePosts,
+  togglePostLike,
+  getPostComments,
+  createPostComment,
 };
