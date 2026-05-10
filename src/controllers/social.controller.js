@@ -1,5 +1,11 @@
 const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
-const { followSchema, createPostSchema, createReviewSchema, updateProfileSchema } = require('../schemas/social.schema');
+const {
+  followSchema,
+  createPostSchema,
+  createRepostSchema,
+  createReviewSchema,
+  updateProfileSchema,
+} = require('../schemas/social.schema');
 
 // Returns true when the error is "table not yet migrated" (schema cache miss)
 function _isMissingTable(error) {
@@ -201,14 +207,24 @@ async function getFeed(req, res) {
     const offset = (page - 1) * limit;
     const me = req.user.id;
 
-    // Get IDs of people I follow
+    const { data: rpcData, error: rpcErr } = await req.supabase.rpc('social_feed_items', {
+      p_viewer: me,
+      p_limit: limit,
+      p_offset: offset,
+    });
+
+    if (!rpcErr && Array.isArray(rpcData)) {
+      const posts = rpcData.map((row) => _normalizeFeedRpcRow(row.item ?? row));
+      return res.json({ posts, page, has_more: posts.length === limit });
+    }
+
+    // Fallback sin RPC / migración antigua
     const { data: followData } = await req.supabase
       .from('follows')
       .select('following_id')
       .eq('follower_id', me);
 
     const followingIds = (followData ?? []).map((f) => f.following_id);
-    // Include own posts in feed
     const authorIds = [...new Set([me, ...followingIds])];
 
     const { data, error } = await req.supabase
@@ -223,7 +239,11 @@ async function getFeed(req, res) {
       return res.status(400).json({ error: error.message });
     }
 
-    const posts = (data ?? []).map(_mapPost);
+    const posts = (data ?? []).map((p) => ({
+      feed_kind: 'post',
+      created_at: p.created_at,
+      post: _mapPost(p),
+    }));
     return res.json({ posts, page, has_more: posts.length === limit });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch feed', details: err.message });
@@ -253,9 +273,69 @@ async function createPost(req, res) {
       return res.status(400).json({ error: error.message });
     }
 
-    return res.status(201).json(_mapPost(data));
+    return res.status(201).json({
+      feed_kind: 'post',
+      created_at: data.created_at,
+      post: _mapPost(data),
+    });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create post', details: err.message });
+  }
+}
+
+async function createRepost(req, res) {
+  try {
+    const parsed = createRepostSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+
+    const originalPostId = req.params.id;
+    const { data: exists, error: existsErr } = await req.supabase
+      .from('posts')
+      .select('id')
+      .eq('id', originalPostId)
+      .maybeSingle();
+
+    if (existsErr && !_isMissingTable(existsErr)) return res.status(400).json({ error: existsErr.message });
+    if (!exists) return res.status(404).json({ error: 'Post not found' });
+
+    const { data: inserted, error } = await req.supabase
+      .from('post_reposts')
+      .insert({
+        reposter_id: req.user.id,
+        original_post_id: originalPostId,
+        quote_body: parsed.data.quote_body ?? null,
+      })
+      .select('id, quote_body, created_at')
+      .single();
+
+    if (error) {
+      if (_isMissingTable(error)) {
+        return res.status(503).json({ error: 'Reposts no disponibles. Aplica la migración post_reposts.' });
+      }
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya reposteaste esta publicación' });
+      return res.status(400).json({ error: error.message });
+    }
+
+    const service = createSupabaseServiceRoleClient();
+    const [{ data: reposter }, { data: original }] = await Promise.all([
+      service.from('profiles').select('id, full_name, avatar_url').eq('id', req.user.id).maybeSingle(),
+      service
+        .from('posts')
+        .select('id, body, image_urls, created_at, author:profiles!posts_author_id_fkey(id, full_name, avatar_url)')
+        .eq('id', originalPostId)
+        .maybeSingle(),
+    ]);
+
+    return res.status(201).json({
+      feed_kind: 'repost',
+      created_at: inserted.created_at,
+      repost_id: inserted.id,
+      quote_body: inserted.quote_body ?? null,
+      reposter: reposter ?? null,
+      post: original ? _mapPost(original) : null,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to create repost', details: err.message });
   }
 }
 
@@ -267,6 +347,17 @@ async function getUserPosts(req, res) {
     const offset = (page - 1) * limit;
 
     const service = createSupabaseServiceRoleClient();
+    const { data: rpcData, error: rpcErr } = await service.rpc('social_profile_feed_items', {
+      p_profile: id,
+      p_limit: limit,
+      p_offset: offset,
+    });
+
+    if (!rpcErr && Array.isArray(rpcData)) {
+      const posts = rpcData.map((row) => _normalizeFeedRpcRow(row.item ?? row));
+      return res.json({ posts, page, has_more: posts.length === limit });
+    }
+
     const { data, error } = await service
       .from('posts')
       .select('id, body, image_urls, created_at, author:profiles!posts_author_id_fkey(id, full_name, avatar_url)')
@@ -279,7 +370,11 @@ async function getUserPosts(req, res) {
       return res.status(400).json({ error: error.message });
     }
 
-    const posts = (data ?? []).map(_mapPost);
+    const posts = (data ?? []).map((p) => ({
+      feed_kind: 'post',
+      created_at: p.created_at,
+      post: _mapPost(p),
+    }));
     return res.json({ posts, page, has_more: posts.length === limit });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch user posts', details: err.message });
@@ -455,7 +550,12 @@ async function getExplorePosts(req, res) {
       return res.status(400).json({ error: error.message });
     }
 
-    return res.json({ posts: (data ?? []).map(_mapPost) });
+    const posts = (data ?? []).map((p) => ({
+      feed_kind: 'post',
+      created_at: p.created_at,
+      post: _mapPost(p),
+    }));
+    return res.json({ posts });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch explore posts', details: err.message });
   }
@@ -473,12 +573,48 @@ function _mapPost(p) {
   };
 }
 
+/** Normaliza fila JSON del RPC (feed unificado). */
+function _normalizeFeedRpcRow(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const o = raw;
+  if (o.feed_kind === 'post' && o.post) {
+    return {
+      feed_kind: 'post',
+      created_at: o.created_at,
+      post: _mapPost(_coercePostRow(o.post)),
+    };
+  }
+  if (o.feed_kind === 'repost' && o.post) {
+    return {
+      feed_kind: 'repost',
+      created_at: o.created_at,
+      repost_id: o.repost_id,
+      quote_body: o.quote_body ?? null,
+      reposter: o.reposter ?? null,
+      post: _mapPost(_coercePostRow(o.post)),
+    };
+  }
+  return o;
+}
+
+function _coercePostRow(post) {
+  if (!post || typeof post !== 'object') return post;
+  return {
+    id: post.id,
+    body: post.body,
+    image_urls: Array.isArray(post.image_urls) ? post.image_urls : [],
+    created_at: post.created_at,
+    author: post.author ?? null,
+  };
+}
+
 module.exports = {
   getProfile,
   followUser,
   unfollowUser,
   getFeed,
   createPost,
+  createRepost,
   getUserPosts,
   createReview,
   getProfileReviews,

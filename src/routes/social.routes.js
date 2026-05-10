@@ -6,6 +6,7 @@ const {
   unfollowUser,
   getFeed,
   createPost,
+  createRepost,
   getUserPosts,
   createReview,
   getProfileReviews,
@@ -30,9 +31,10 @@ router.patch('/profiles/me', requireAuth, updateProfile);
 router.post('/follows', requireAuth, followUser);
 router.delete('/follows/:following_id', requireAuth, unfollowUser);
 
-// Posts
+// Posts — /posts/:id/repost antes que rutas ambiguas
 router.get('/posts', requireAuth, getFeed);
 router.post('/posts', requireAuth, createPost);
+router.post('/posts/:id/repost', requireAuth, createRepost);
 router.get('/profiles/:id/posts', getUserPosts);
 
 // Reviews

@@ -9,6 +9,14 @@ const createPostSchema = z.object({
   image_urls: z.array(z.string().url()).optional().default([]),
 });
 
+const createRepostSchema = z.object({
+  quote_body: z
+    .string()
+    .max(1000)
+    .optional()
+    .transform((s) => (s === undefined || s.trim() === '' ? undefined : s.trim())),
+});
+
 const createReviewSchema = z.object({
   reviewee_id: z.string().uuid(),
   appointment_id: z.string().uuid(),
@@ -22,4 +30,10 @@ const updateProfileSchema = z.object({
   years_experience: z.number().int().min(0).max(60).optional(),
 });
 
-module.exports = { followSchema, createPostSchema, createReviewSchema, updateProfileSchema };
+module.exports = {
+  followSchema,
+  createPostSchema,
+  createRepostSchema,
+  createReviewSchema,
+  updateProfileSchema,
+};
