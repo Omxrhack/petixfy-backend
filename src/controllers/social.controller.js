@@ -382,6 +382,71 @@ async function updateProfile(req, res) {
   }
 }
 
+// ─── Discover ────────────────────────────────────────────────────────────────
+
+async function getSuggestions(req, res) {
+  try {
+    const limit = Math.min(20, parseInt(req.query.limit ?? '10', 10));
+    const me = req.user.id;
+
+    // Quién ya sigo (falls back to empty if follows table missing)
+    let excludeIds = [me];
+    try {
+      const { data: followData } = await req.supabase
+        .from('follows')
+        .select('following_id')
+        .eq('follower_id', me);
+      excludeIds = [me, ...(followData ?? []).map((f) => f.following_id)];
+    } catch (_) { /* follows not yet migrated */ }
+
+    const service = createSupabaseServiceRoleClient();
+    const { data, error } = await service
+      .from('profiles')
+      .select('id, full_name, avatar_url, role')
+      .not('id', 'in', `(${excludeIds.join(',')})`)
+      .limit(limit);
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    return res.json({ suggestions: data ?? [] });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to fetch suggestions', details: err.message });
+  }
+}
+
+async function getExplorePosts(req, res) {
+  try {
+    const limit = Math.min(20, parseInt(req.query.limit ?? '5', 10));
+    const me = req.user.id;
+
+    let excludeIds = [me];
+    try {
+      const { data: followData } = await req.supabase
+        .from('follows')
+        .select('following_id')
+        .eq('follower_id', me);
+      excludeIds = [me, ...(followData ?? []).map((f) => f.following_id)];
+    } catch (_) { /* follows not yet migrated */ }
+
+    const service = createSupabaseServiceRoleClient();
+    const { data, error } = await service
+      .from('posts')
+      .select('id, body, image_urls, created_at, author:profiles!posts_author_id_fkey(id, full_name, avatar_url)')
+      .not('author_id', 'in', `(${excludeIds.join(',')})`)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      if (_isMissingTable(error)) return res.json({ posts: [] });
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.json({ posts: (data ?? []).map(_mapPost) });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to fetch explore posts', details: err.message });
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function _mapPost(p) {
@@ -404,4 +469,6 @@ module.exports = {
   createReview,
   getProfileReviews,
   updateProfile,
+  getSuggestions,
+  getExplorePosts,
 };

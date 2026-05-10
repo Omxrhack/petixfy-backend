@@ -10,9 +10,15 @@ const {
   createReview,
   getProfileReviews,
   updateProfile,
+  getSuggestions,
+  getExplorePosts,
 } = require('../controllers/social.controller');
 
 const router = Router();
+
+// Discover — must be before /profiles/:id to avoid param collision
+router.get('/profiles/suggestions', requireAuth, getSuggestions);
+router.get('/posts/explore',        requireAuth, getExplorePosts);
 
 // Public profile (optional auth for is_following)
 router.get('/profiles/:id', getProfile);
