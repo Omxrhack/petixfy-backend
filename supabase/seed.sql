@@ -1230,7 +1230,8 @@ INSERT INTO public.products (
   description,
   category,
   price,
-  stock
+  stock,
+  active
 )
 VALUES
   (
@@ -1239,7 +1240,8 @@ VALUES
     'Alimento balanceado para perros adultos, bolsa 15 kg.',
     'alimento',
     549.00,
-    40
+    40,
+    true
   ),
   (
     'dddddddd-dddd-4ddd-8ddd-dddddddddd02',
@@ -1247,7 +1249,8 @@ VALUES
     'Receta salmon y arroz, bolsa 8 kg.',
     'alimento',
     389.00,
-    27
+    27,
+    true
   ),
   (
     'dddddddd-dddd-4ddd-8ddd-dddddddddd03',
@@ -1255,7 +1258,8 @@ VALUES
     'Formula suave para piel sensible, 500 ml.',
     'higiene',
     149.00,
-    35
+    35,
+    true
   ),
   (
     'dddddddd-dddd-4ddd-8ddd-dddddddddd04',
@@ -1263,7 +1267,8 @@ VALUES
     'Correa ajustable con costuras reflectantes.',
     'accesorios',
     219.00,
-    18
+    18,
+    true
   ),
   (
     'dddddddd-dddd-4ddd-8ddd-dddddddddd05',
@@ -1271,7 +1276,8 @@ VALUES
     'Arena para gato con control de olor, 10 kg.',
     'higiene',
     179.00,
-    22
+    22,
+    true
   ),
   (
     'dddddddd-dddd-4ddd-8ddd-dddddddddd06',
@@ -1279,7 +1285,8 @@ VALUES
     'Transportadora ventilada para perros y gatos medianos.',
     'accesorios',
     690.00,
-    9
+    9,
+    true
   )
 ON CONFLICT (id) DO UPDATE
 SET
@@ -1288,6 +1295,7 @@ SET
   category = EXCLUDED.category,
   price = EXCLUDED.price,
   stock = EXCLUDED.stock,
+  active = EXCLUDED.active,
   updated_at = now();
 
 INSERT INTO public.store_orders (

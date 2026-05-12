@@ -212,12 +212,35 @@ async function getDashboard(req, res) {
         neighborhood: detailsMap[a.owner_id]?.address_text ?? '',
       }));
 
+    let active_emergencies_count = 0;
+    let pending_store_orders_count = 0;
+    try {
+      const admin = createSupabaseServiceRoleClient();
+      const [{ count: emergencyCount }, { count: storeOrderCount }] = await Promise.all([
+        admin
+          .from('emergencies')
+          .select('id', { count: 'exact', head: true })
+          .eq('assigned_vet_id', vetId)
+          .in('status', ['open', 'dispatched']),
+        admin
+          .from('store_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_confirmation'),
+      ]);
+      active_emergencies_count = emergencyCount ?? 0;
+      pending_store_orders_count = storeOrderCount ?? 0;
+    } catch (_) {
+      // Store/emergency counters are additive; keep dashboard usable if service role is unavailable.
+    }
+
     return res.json({
       date: dateStr,
       on_duty: vsRow?.on_duty ?? false,
       vet_base_latitude: vetBaseRow?.base_latitude ?? null,
       vet_base_longitude: vetBaseRow?.base_longitude ?? null,
       pending_count,
+      active_emergencies_count,
+      pending_store_orders_count,
       earnings_mxn_today,
       visits,
     });

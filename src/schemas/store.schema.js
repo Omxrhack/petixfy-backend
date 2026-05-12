@@ -32,4 +32,29 @@ const createStoreOrderSchema = z
     }
   });
 
-module.exports = { createStoreOrderSchema };
+const optionalText = (max = 500) => z.string().trim().max(max).optional().nullable();
+
+const createProductSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  description: optionalText(2000),
+  category: z.string().trim().min(2).max(80),
+  price: z.coerce.number().positive().max(999999),
+  stock: z.coerce.number().int().min(0).max(999999),
+  image_url: optionalText(1000),
+  active: z.boolean().optional(),
+});
+
+const updateProductSchema = createProductSchema.partial().refine((value) => Object.keys(value).length > 0, {
+  message: 'At least one product field is required',
+});
+
+const vetStoreOrderStatusSchema = z.object({
+  status: z.enum(['pending_confirmation', 'confirmed', 'cancelled', 'fulfilled']),
+});
+
+module.exports = {
+  createStoreOrderSchema,
+  createProductSchema,
+  updateProductSchema,
+  vetStoreOrderStatusSchema,
+};

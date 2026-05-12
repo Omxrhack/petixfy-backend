@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const { createPetSchema, updatePetSchema } = require('../src/schemas/pet.schema');
 const { createAppointmentSchema } = require('../src/schemas/appointment.schema');
-const { createStoreOrderSchema } = require('../src/schemas/store.schema');
+const { createProductSchema, createStoreOrderSchema, vetStoreOrderStatusSchema } = require('../src/schemas/store.schema');
 const { createTrackingSessionSchema } = require('../src/schemas/tracking.schema');
 
 test('pet schemas accept full medical payloads', () => {
@@ -74,4 +74,19 @@ test('store checkout schema validates fulfillment requirements', () => {
     items: [{ product_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01', quantity: 1 }],
   });
   assert.equal(pickup.success, true);
+});
+
+test('vet store schemas validate products and order status', () => {
+  const product = createProductSchema.parse({
+    name: 'Guantes veterinarios',
+    category: 'insumos',
+    price: '129.90',
+    stock: '12',
+    active: true,
+  });
+  assert.equal(product.price, 129.9);
+  assert.equal(product.stock, 12);
+
+  assert.equal(vetStoreOrderStatusSchema.safeParse({ status: 'confirmed' }).success, true);
+  assert.equal(vetStoreOrderStatusSchema.safeParse({ status: 'refunded' }).success, false);
 });
