@@ -4,6 +4,7 @@ const petsRoutes = require('./pets.routes');
 const appointmentsRoutes = require('./appointments.routes');
 const emergenciesRoutes = require('./emergencies.routes');
 const productsRoutes = require('./products.routes');
+const storeRoutes = require('./store.routes');
 const rewardsRoutes = require('./rewards.routes');
 const triageRoutes = require('./triage.routes');
 const trackingRoutes = require('./tracking.routes');
@@ -11,15 +12,19 @@ const vetRoutes = require('./vet.routes');
 const vetsCatalogRoutes = require('./vets.routes');
 const authRoutes = require('./authRoutes');
 const { requireVet } = require('../middleware/requireVet');
+const socialRoutes = require('./social.routes');
 
 const router = Router();
 
 router.use('/auth', authRoutes);
+// Social: profiles, follows, posts, reviews (mixed auth — each route decides)
+router.use('/', socialRoutes);
 router.use('/vets', requireAuth, vetsCatalogRoutes);
 router.use('/pets', requireAuth, petsRoutes);
 router.use('/appointments', requireAuth, appointmentsRoutes);
 router.use('/emergencies', requireAuth, emergenciesRoutes);
 router.use('/products', productsRoutes);
+router.use('/store', requireAuth, storeRoutes);
 router.use('/rewards', requireAuth, rewardsRoutes);
 router.use('/triage', requireAuth, triageRoutes);
 router.use('/tracking', requireAuth, trackingRoutes);

@@ -65,18 +65,45 @@ async function uploadPetPhoto(req, res) {
   }
 }
 
+function petPayloadToRow(payload) {
+  const row = {};
+  const fields = [
+    'name',
+    'species',
+    'breed',
+    'birth_date',
+    'sex',
+    'is_neutered',
+    'vaccines_up_to_date',
+    'medical_notes',
+    'temperament',
+  ];
+
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(payload, field)) {
+      row[field] = payload[field] ?? null;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'weight')) {
+    row.weight = payload.weight != null ? payload.weight : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'weight_kg')) {
+    row.weight_kg = payload.weight_kg != null ? payload.weight_kg : null;
+    if (!Object.prototype.hasOwnProperty.call(payload, 'weight')) {
+      row.weight = payload.weight_kg != null ? payload.weight_kg : null;
+    }
+  }
+
+  return row;
+}
+
 async function createPet(req, res) {
   try {
-    const { name, species, breed, birth_date, weight } = req.body;
-
     const ownerId = req.user.id;
     const row = {
+      ...petPayloadToRow(req.body),
       owner_id: ownerId,
-      name,
-      species,
-      breed: breed ?? null,
-      birth_date: birth_date ?? null,
-      weight: weight != null ? weight : null,
     };
 
     const { data, error } = await req.supabase.from('pets').insert(row).select().single();
@@ -88,6 +115,119 @@ async function createPet(req, res) {
     return res.status(201).json(data);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create pet', details: err.message });
+  }
+}
+
+async function updatePet(req, res) {
+  try {
+    const petId = req.params.id;
+    const ownerId = req.user.id;
+    const updates = petPayloadToRow(req.body);
+
+    const { data, error } = await req.supabase
+      .from('pets')
+      .update(updates)
+      .eq('id', petId)
+      .eq('owner_id', ownerId)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Pet not found or not owned by user' });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update pet', details: err.message });
+  }
+}
+
+async function deletePet(req, res) {
+  try {
+    const petId = req.params.id;
+    const ownerId = req.user.id;
+
+    const { data, error } = await req.supabase
+      .from('pets')
+      .delete()
+      .eq('id', petId)
+      .eq('owner_id', ownerId)
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Pet not found or not owned by user' });
+    }
+
+    return res.status(204).send();
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to delete pet', details: err.message });
+  }
+}
+
+async function getPetRecord(req, res) {
+  try {
+    const petId = req.params.id;
+    const ownerId = req.user.id;
+
+    const { data: pet, error: petError } = await req.supabase
+      .from('pets')
+      .select('*')
+      .eq('id', petId)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (petError) {
+      return res.status(400).json({ error: petError.message, details: petError });
+    }
+    if (!pet) {
+      return res.status(404).json({ error: 'Pet not found or not owned by user' });
+    }
+
+    const [appointments, emergencies, triageLogs] = await Promise.all([
+      req.supabase
+        .from('appointments')
+        .select('id, scheduled_at, status, notes, vet_id, vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url)')
+        .eq('pet_id', petId)
+        .eq('owner_id', ownerId)
+        .order('scheduled_at', { ascending: false })
+        .limit(40),
+      req.supabase
+        .from('emergencies')
+        .select('id, symptoms, status, created_at, assigned_vet_id, vet:profiles!emergencies_assigned_vet_id_fkey(id, full_name, avatar_url)')
+        .eq('pet_id', petId)
+        .order('created_at', { ascending: false })
+        .limit(40),
+      req.supabase
+        .from('triage_logs')
+        .select('id, answers, urgency_level, recommendation, created_at')
+        .eq('pet_id', petId)
+        .order('created_at', { ascending: false })
+        .limit(40),
+    ]);
+
+    for (const result of [appointments, emergencies, triageLogs]) {
+      if (result.error) {
+        return res.status(400).json({ error: result.error.message, details: result.error });
+      }
+    }
+
+    return res.json({
+      pet,
+      appointments: appointments.data ?? [],
+      emergencies: emergencies.data ?? [],
+      triage_logs: triageLogs.data ?? [],
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to load pet record', details: err.message });
   }
 }
 
@@ -115,4 +255,4 @@ async function listPetsByOwner(req, res) {
   }
 }
 
-module.exports = { createPet, listPetsByOwner, uploadPetPhoto };
+module.exports = { createPet, updatePet, deletePet, getPetRecord, listPetsByOwner, uploadPetPhoto };

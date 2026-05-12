@@ -9,11 +9,13 @@ async function createAppointment(req, res) {
     const {
       pet_id,
       scheduled_at,
+      appointment_type: appointmentType,
+      reason,
       notes,
-      status,
       vet_id,
       visit_latitude: visitLatitude,
       visit_longitude: visitLongitude,
+      visit_address_text: visitAddressText,
     } = req.body;
 
     if (!pet_id || !scheduled_at) {
@@ -40,8 +42,10 @@ async function createAppointment(req, res) {
       pet_id,
       owner_id: ownerId,
       scheduled_at,
+      appointment_type: appointmentType ?? null,
+      reason: reason ?? null,
       notes: notes ?? null,
-      status: status ?? 'pending',
+      status: 'pending',
     };
 
     if (vet_id) {
@@ -59,13 +63,79 @@ async function createAppointment(req, res) {
 
     const lat = visitLatitude != null ? Number(visitLatitude) : null;
     const lng = visitLongitude != null ? Number(visitLongitude) : null;
+    const addressText = typeof visitAddressText === 'string' ? visitAddressText.trim() : '';
+    const clientDetailsPatch = {};
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      await req.supabase.from('client_details').update({ latitude: lat, longitude: lng }).eq('profile_id', ownerId);
+      clientDetailsPatch.latitude = lat;
+      clientDetailsPatch.longitude = lng;
+    }
+    if (addressText) {
+      clientDetailsPatch.address_text = addressText;
+    }
+    if (Object.keys(clientDetailsPatch).length > 0) {
+      await req.supabase.from('client_details').update(clientDetailsPatch).eq('profile_id', ownerId);
     }
 
     return res.status(201).json(data);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create appointment', details: err.message });
+  }
+}
+
+async function updateMyAppointmentStatus(req, res) {
+  try {
+    const ownerId = req.user.id;
+    const appointmentId = req.params.id;
+    const { status } = req.body;
+
+    const { data: current, error: fetchError } = await req.supabase
+      .from('appointments')
+      .select('id, owner_id, status, scheduled_at')
+      .eq('id', appointmentId)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (fetchError) {
+      return res.status(400).json({ error: fetchError.message, details: fetchError });
+    }
+
+    if (!current) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    if (!['pending', 'confirmed'].includes(current.status)) {
+      return res.status(409).json({ error: 'Only pending or confirmed appointments can be cancelled' });
+    }
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .update({ status })
+      .eq('id', appointmentId)
+      .eq('owner_id', ownerId)
+      .select(
+        'id, vet_id, scheduled_at, status, appointment_type, reason, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
+      )
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.json({
+      appointment: {
+        id: data.id,
+        vet_id: data.vet_id,
+        scheduled_at: data.scheduled_at,
+        status: data.status,
+        appointment_type: data.appointment_type,
+        reason: data.reason,
+        notes: data.notes,
+        pet: data.pets,
+        vet: data.vet ?? null,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update appointment', details: err.message });
   }
 }
 
@@ -76,7 +146,7 @@ async function listMyAppointments(req, res) {
     const { data, error } = await req.supabase
       .from('appointments')
       .select(
-        'id, vet_id, scheduled_at, status, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
+        'id, vet_id, scheduled_at, status, appointment_type, reason, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
       )
       .eq('owner_id', ownerId)
       .order('scheduled_at', { ascending: true })
@@ -91,6 +161,8 @@ async function listMyAppointments(req, res) {
       vet_id: a.vet_id,
       scheduled_at: a.scheduled_at,
       status: a.status,
+      appointment_type: a.appointment_type,
+      reason: a.reason,
       notes: a.notes,
       pet: a.pets,
       vet: a.vet ?? null,
@@ -102,4 +174,50 @@ async function listMyAppointments(req, res) {
   }
 }
 
-module.exports = { createAppointment, listMyAppointments };
+async function getMyVet(req, res) {
+  try {
+    const ownerId = req.user.id;
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .select(
+        'vet_id, scheduled_at, vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, vet_services(specialty))',
+      )
+      .eq('owner_id', ownerId)
+      .not('vet_id', 'is', null)
+      .order('scheduled_at', { ascending: true });
+
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data?.length) return res.json({ vet: null });
+
+    const freq = {};
+    for (const a of data) {
+      const id = a.vet_id;
+      if (!freq[id]) {
+        freq[id] = {
+          count: 0,
+          first: a.scheduled_at,
+          vet: a.vet,
+          specialty: a.vet?.vet_services?.[0]?.specialty ?? null,
+        };
+      }
+      freq[id].count++;
+    }
+
+    const primary = Object.values(freq).sort((a, b) => b.count - a.count)[0];
+
+    return res.json({
+      vet: {
+        id: primary.vet.id,
+        full_name: primary.vet.full_name,
+        avatar_url: primary.vet.avatar_url,
+        specialty: primary.specialty,
+        relationship_since: primary.first,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to get assigned vet', details: err.message });
+  }
+}
+
+module.exports = { createAppointment, updateMyAppointmentStatus, listMyAppointments, getMyVet };

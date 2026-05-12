@@ -163,6 +163,39 @@ async function getTrackingSession(req, res) {
   }
 }
 
+async function listActiveTrackingSessions(req, res) {
+  try {
+    const { role, error: roleError } = await loadProfileRole(req);
+    if (roleError) {
+      return res.status(400).json({ error: roleError.message, details: roleError });
+    }
+
+    const { data, error } = await req.supabase
+      .from('tracking_sessions')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(20);
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    const enriched = [];
+    for (const session of data ?? []) {
+      if (role === 'vet') {
+        const gate = await assertVetOwnsTrackingSession(req, session.id);
+        if (gate.error || gate.forbidden) continue;
+      }
+      const item = await enrichTrackingSession(req, session);
+      enriched.push(item);
+    }
+
+    return res.json({ sessions: enriched });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to list tracking sessions', details: err.message });
+  }
+}
+
 async function patchVetLocation(req, res) {
   try {
     const { id } = req.params;
@@ -359,4 +392,4 @@ async function createTrackingSession(req, res) {
   }
 }
 
-module.exports = { getTrackingSession, patchVetLocation, createTrackingSession };
+module.exports = { getTrackingSession, listActiveTrackingSessions, patchVetLocation, createTrackingSession };

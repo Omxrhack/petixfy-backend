@@ -34,7 +34,7 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 const APPOINTMENT_SELECT_VET =
-  'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
+  'id, vet_id, scheduled_at, status, appointment_type, reason, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
 
 /** Calendar day YYYY-MM-DD in America/Mexico_City (dashboard KPIs). */
 function mexicoCalendarDateStr(isoOrMs) {
@@ -205,10 +205,33 @@ async function getDashboard(req, res) {
         vet_avatar_url: a.vet?.avatar_url ?? null,
         scheduled_at: a.scheduled_at,
         status: a.status,
+        appointment_type: a.appointment_type,
+        reason: a.reason,
         pet_name: a.pets?.name ?? '',
         species: a.pets?.species ?? '',
         neighborhood: detailsMap[a.owner_id]?.address_text ?? '',
       }));
+
+    let active_emergencies_count = 0;
+    let pending_store_orders_count = 0;
+    try {
+      const admin = createSupabaseServiceRoleClient();
+      const [{ count: emergencyCount }, { count: storeOrderCount }] = await Promise.all([
+        admin
+          .from('emergencies')
+          .select('id', { count: 'exact', head: true })
+          .eq('assigned_vet_id', vetId)
+          .in('status', ['open', 'dispatched']),
+        admin
+          .from('store_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_confirmation'),
+      ]);
+      active_emergencies_count = emergencyCount ?? 0;
+      pending_store_orders_count = storeOrderCount ?? 0;
+    } catch (_) {
+      // Store/emergency counters are additive; keep dashboard usable if service role is unavailable.
+    }
 
     return res.json({
       date: dateStr,
@@ -216,6 +239,8 @@ async function getDashboard(req, res) {
       vet_base_latitude: vetBaseRow?.base_latitude ?? null,
       vet_base_longitude: vetBaseRow?.base_longitude ?? null,
       pending_count,
+      active_emergencies_count,
+      pending_store_orders_count,
       earnings_mxn_today,
       visits,
     });
@@ -276,6 +301,8 @@ async function getSchedule(req, res) {
       vet_id: a.vet_id,
       scheduled_at: a.scheduled_at,
       status: a.status,
+      appointment_type: a.appointment_type,
+      reason: a.reason,
       notes: a.notes,
       fee_mxn: a.fee_mxn,
       owner_id: a.owner_id,
@@ -510,6 +537,49 @@ async function claimAppointment(req, res) {
   }
 }
 
+async function updateAssignedAppointmentStatus(req, res) {
+  try {
+    const vetId = req.user.id;
+    const appointmentId = req.params.id;
+    const { status } = req.body;
+
+    const { data: current, error: fetchError } = await req.supabase
+      .from('appointments')
+      .select('id, vet_id, status')
+      .eq('id', appointmentId)
+      .eq('vet_id', vetId)
+      .maybeSingle();
+
+    if (fetchError) {
+      return res.status(400).json({ error: fetchError.message, details: fetchError });
+    }
+
+    if (!current) {
+      return res.status(404).json({ error: 'Appointment not found or not assigned to this vet' });
+    }
+
+    if (current.status === 'cancelled') {
+      return res.status(409).json({ error: 'Cancelled appointments cannot be updated' });
+    }
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .update({ status })
+      .eq('id', appointmentId)
+      .eq('vet_id', vetId)
+      .select(APPOINTMENT_SELECT_VET)
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.json({ appointment: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update appointment status', details: err.message });
+  }
+}
+
 /** Nueva cita confirmada; insert con service role si hay vinculo con la mascota (cita/emergencia). */
 async function createVetAppointment(req, res) {
   try {
@@ -682,6 +752,34 @@ async function uploadPetPhotoAsVet(req, res) {
   }
 }
 
+async function closeEmergency(req, res) {
+  try {
+    const vetId = req.user.id;
+    const emergencyId = req.params.id;
+
+    const { data, error } = await req.supabase
+      .from('emergencies')
+      .update({ status: 'closed' })
+      .eq('id', emergencyId)
+      .eq('assigned_vet_id', vetId)
+      .in('status', ['open', 'dispatched'])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Emergency not found or not assigned to this vet' });
+    }
+
+    return res.json({ emergency: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to close emergency', details: err.message });
+  }
+}
+
 module.exports = {
   patchAvailability,
   getDashboard,
@@ -689,7 +787,9 @@ module.exports = {
   getPetSummary,
   listActiveEmergencies,
   respondEmergency,
+  closeEmergency,
   uploadPetPhotoAsVet,
   claimAppointment,
+  updateAssignedAppointmentStatus,
   createVetAppointment,
 };

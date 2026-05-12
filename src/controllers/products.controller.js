@@ -1,4 +1,5 @@
 const { supabaseAnon } = require('../lib/supabaseAnon');
+const { createSupabaseServiceRoleClient } = require('../lib/supabaseServiceRole');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -36,6 +37,7 @@ async function listProducts(req, res) {
     let query = supabaseAnon
       .from('products')
       .select('*', { count: 'exact', head: false })
+      .eq('active', true)
       .order('name', { ascending: true });
 
     if (category != null && String(category).trim() !== '') {
@@ -72,4 +74,110 @@ async function listProducts(req, res) {
   }
 }
 
-module.exports = { listProducts };
+async function getProduct(req, res) {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabaseAnon
+      .from('products')
+      .select('*')
+      .eq('id', id)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    return res.json({ product: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to get product', details: err.message });
+  }
+}
+
+function productPayload(body) {
+  const row = {};
+  for (const key of ['name', 'description', 'category', 'price', 'stock', 'image_url', 'active']) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      row[key] = body[key];
+    }
+  }
+  return row;
+}
+
+async function createVetProduct(req, res) {
+  try {
+    const admin = createSupabaseServiceRoleClient();
+    const row = productPayload(req.body);
+    const { data, error } = await admin.from('products').insert(row).select().single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.status(201).json({ product: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to create product', details: err.message });
+  }
+}
+
+async function updateVetProduct(req, res) {
+  try {
+    const admin = createSupabaseServiceRoleClient();
+    const row = productPayload(req.body);
+    const { data, error } = await admin
+      .from('products')
+      .update(row)
+      .eq('id', req.params.id)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    return res.json({ product: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update product', details: err.message });
+  }
+}
+
+async function deleteVetProduct(req, res) {
+  try {
+    const admin = createSupabaseServiceRoleClient();
+    const { data, error } = await admin
+      .from('products')
+      .update({ active: false })
+      .eq('id', req.params.id)
+      .select('id, active')
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    return res.json({ product: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to disable product', details: err.message });
+  }
+}
+
+module.exports = {
+  listProducts,
+  getProduct,
+  createVetProduct,
+  updateVetProduct,
+  deleteVetProduct,
+};

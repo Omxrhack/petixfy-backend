@@ -9,6 +9,8 @@ const DEFAULT_PROFILE_FLAGS = {
   onboarding_completed: false,
 };
 
+const PROFILE_SELECT = 'id, role, full_name, phone, avatar_url, bio, location, is_verified, onboarding_completed';
+
 function sessionPayload(session) {
   if (!session) {
     return null;
@@ -61,7 +63,7 @@ async function fetchProfileByUserWithJwt(userId, accessToken) {
   const userClient = createSupabaseClientWithJwt(accessToken);
   const { data, error } = await userClient
     .from('profiles')
-    .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
+    .select(PROFILE_SELECT)
     .eq('id', userId)
     .maybeSingle();
 
@@ -75,7 +77,7 @@ async function fetchProfileByUserWithServiceRole(userId) {
   const serviceClient = getServiceClient();
   const { data, error } = await serviceClient
     .from('profiles')
-    .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
+    .select(PROFILE_SELECT)
     .eq('id', userId)
     .maybeSingle();
 
@@ -83,6 +85,45 @@ async function fetchProfileByUserWithServiceRole(userId) {
     throw error;
   }
   return data;
+}
+
+function experienceRangeToYears(range) {
+  if (range === '8+') return 8;
+  if (range === '4-7') return 4;
+  return 1;
+}
+
+async function fetchOnboardingDetails(client, userId, role) {
+  if (role === 'client') {
+    const [{ data: clientDetails }, { data: pets }] = await Promise.all([
+      client.from('client_details').select('*').eq('profile_id', userId).maybeSingle(),
+      client.from('pets').select('*').eq('owner_id', userId).order('created_at', { ascending: true }).limit(1),
+    ]);
+
+    return {
+      client_details: clientDetails ?? null,
+      pet_profile: Array.isArray(pets) && pets.length > 0 ? pets[0] : null,
+    };
+  }
+
+  if (role === 'vet') {
+    const [{ data: vetDetails }, { data: vetServices }, { data: vetFinances }, { data: vetStoreSettings }] =
+      await Promise.all([
+        client.from('vet_details').select('*').eq('profile_id', userId).maybeSingle(),
+        client.from('vet_services').select('*').eq('profile_id', userId).maybeSingle(),
+        client.from('vet_finances').select('*').eq('profile_id', userId).maybeSingle(),
+        client.from('vet_store_settings').select('*').eq('profile_id', userId).maybeSingle(),
+      ]);
+
+    return {
+      vet_details: vetDetails ?? null,
+      vet_services: vetServices ?? null,
+      vet_finances: vetFinances ?? null,
+      vet_store_settings: vetStoreSettings ?? null,
+    };
+  }
+
+  return null;
 }
 
 function isEmailRateLimitError(error) {
@@ -443,7 +484,7 @@ async function verifyOtp(req, res) {
 
 async function completeOnboarding(req, res) {
   try {
-    const { role, full_name, phone, avatar_url } = req.body;
+    const { role, full_name, phone, avatar_url, profile_social } = req.body;
     const userId = req.user.id;
 
     const { data: profile, error: profileError } = await req.supabase
@@ -453,10 +494,12 @@ async function completeOnboarding(req, res) {
         full_name,
         phone,
         avatar_url: avatar_url || null,
+        bio: profile_social?.bio || null,
+        location: profile_social?.location || null,
         onboarding_completed: true,
       })
       .eq('id', userId)
-      .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
+      .select(PROFILE_SELECT)
       .maybeSingle();
 
     if (profileError) {
@@ -480,6 +523,11 @@ async function completeOnboarding(req, res) {
           address_notes: client_details.address_notes || null,
           latitude: client_details.latitude ?? null,
           longitude: client_details.longitude ?? null,
+        default_contact_name: client_details.default_contact_name || full_name,
+        default_contact_phone: client_details.default_contact_phone || phone,
+        preferred_fulfillment_method: client_details.preferred_fulfillment_method || 'delivery',
+        delivery_notes: client_details.delivery_notes || null,
+        emergency_notes: client_details.emergency_notes || null,
         })
         .select('*')
         .maybeSingle();
@@ -501,6 +549,9 @@ async function completeOnboarding(req, res) {
         vaccines_up_to_date: pet_profile.vaccines_up_to_date,
         medical_notes: pet_profile.medical_notes || null,
         temperament: pet_profile.temperament,
+        allergies: pet_profile.allergies || null,
+        chronic_conditions: pet_profile.chronic_conditions || null,
+        current_medications: pet_profile.current_medications || null,
       };
 
       const { data: petData, error: petError } = await req.supabase.from('pets').insert(petInsert).select('*').single();
@@ -525,6 +576,7 @@ async function completeOnboarding(req, res) {
           cedula: vet_details.cedula,
           university: vet_details.university || null,
           experience_years: vet_details.experience_years,
+          base_address_text: vet_details.base_address_text || null,
           base_latitude: vet_details.base_latitude ?? null,
           base_longitude: vet_details.base_longitude ?? null,
           coverage_radius_km: vet_details.coverage_radius_km,
@@ -544,7 +596,11 @@ async function completeOnboarding(req, res) {
           specialty: vet_services.specialty,
           offered_services: vet_services.offered_services,
           accepts_emergencies: vet_services.accepts_emergencies,
+          home_visit_enabled: vet_services.home_visit_enabled,
+          telemedicine_enabled: vet_services.telemedicine_enabled,
+          emergency_radius_km: vet_services.emergency_radius_km ?? null,
           schedule_json: vet_services.schedule_json,
+          years_experience: experienceRangeToYears(vet_details.experience_years),
         })
         .select('*')
         .maybeSingle();
@@ -557,6 +613,7 @@ async function completeOnboarding(req, res) {
         .from('vet_finances')
         .upsert({
           profile_id: userId,
+          account_holder: vet_finances.account_holder,
           clabe: vet_finances.clabe,
           bank_name: vet_finances.bank_name,
           rfc: vet_finances.rfc || null,
@@ -568,10 +625,30 @@ async function completeOnboarding(req, res) {
         return res.status(400).json({ error: vetFinancesError.message, details: vetFinancesError });
       }
 
+      const { vet_store_settings } = req.body;
+      const { data: vetStoreSettingsData, error: vetStoreSettingsError } = await req.supabase
+        .from('vet_store_settings')
+        .upsert({
+          profile_id: userId,
+          store_display_name: vet_store_settings.store_display_name,
+          pickup_address_text: vet_store_settings.pickup_address_text || null,
+          pickup_instructions: vet_store_settings.pickup_instructions || null,
+          store_contact_phone: vet_store_settings.store_contact_phone || phone,
+          offers_delivery: vet_store_settings.offers_delivery,
+          offers_pickup: vet_store_settings.offers_pickup,
+        })
+        .select('*')
+        .maybeSingle();
+
+      if (vetStoreSettingsError) {
+        return res.status(400).json({ error: vetStoreSettingsError.message, details: vetStoreSettingsError });
+      }
+
       details = {
         vet_details: vetDetailsData,
         vet_services: vetServicesData,
         vet_finances: vetFinancesData,
+        vet_store_settings: vetStoreSettingsData,
       };
     }
 
@@ -647,7 +724,7 @@ async function uploadProfileAvatar(req, res) {
       .from('profiles')
       .update({ avatar_url: publicUrl })
       .eq('id', userId)
-      .select('id, role, full_name, phone, avatar_url, is_verified, onboarding_completed')
+      .select(PROFILE_SELECT)
       .maybeSingle();
 
     if (error) {
@@ -669,10 +746,12 @@ async function me(req, res) {
     }
 
     const profile = await fetchProfileByUserWithJwt(req.user.id, token);
+    const details = await fetchOnboardingDetails(req.supabase, req.user.id, profile?.role);
 
     return res.json({
       user: userPayload(req.user, profile),
       profile,
+      details,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to load session', details: err.message });
