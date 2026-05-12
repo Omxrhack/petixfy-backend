@@ -19,16 +19,31 @@ const mobilePhoneSchema = z
   .trim()
   .regex(/^\+?[0-9]{8,15}$/, 'phone must be a valid mobile number');
 
+const optionalText = (max = 500) => z.string().trim().max(max).optional().or(z.literal(''));
+
+const profileSocialSchema = z
+  .object({
+    bio: optionalText(500),
+    location: optionalText(200),
+  })
+  .optional();
+
 const clientOnboardingSchema = z.object({
   role: z.literal('client'),
   full_name: z.string().trim().min(1, 'full_name is required'),
   phone: mobilePhoneSchema,
   avatar_url: z.string().trim().url('avatar_url must be a valid URL').optional().or(z.literal('')),
+  profile_social: profileSocialSchema,
   client_details: z.object({
     address_text: z.string().trim().min(5, 'address_text is required'),
     address_notes: z.string().trim().max(500).optional().or(z.literal('')),
     latitude: z.coerce.number().min(-90).max(90).nullable().optional(),
     longitude: z.coerce.number().min(-180).max(180).nullable().optional(),
+    default_contact_name: optionalText(160),
+    default_contact_phone: optionalText(80),
+    preferred_fulfillment_method: z.enum(['delivery', 'pickup_contact']).optional(),
+    delivery_notes: optionalText(500),
+    emergency_notes: optionalText(1000),
   }),
   pet_profile: z.object({
     name: z.string().trim().min(1, 'pet_profile.name is required'),
@@ -41,6 +56,9 @@ const clientOnboardingSchema = z.object({
     vaccines_up_to_date: z.enum(['yes', 'no', 'unsure']),
     medical_notes: z.string().trim().max(1000).optional().or(z.literal('')),
     temperament: z.enum(['friendly', 'nervous', 'aggressive']),
+    allergies: optionalText(1000),
+    chronic_conditions: optionalText(1000),
+    current_medications: optionalText(1000),
   }),
 });
 
@@ -49,10 +67,12 @@ const vetOnboardingSchema = z.object({
   full_name: z.string().trim().min(1, 'full_name is required'),
   phone: mobilePhoneSchema,
   avatar_url: z.string().trim().url('avatar_url must be a valid URL'),
+  profile_social: profileSocialSchema,
   vet_details: z.object({
     cedula: z.string().trim().min(5, 'cedula is required'),
     university: z.string().trim().optional().or(z.literal('')),
     experience_years: z.enum(['1-3', '4-7', '8+']),
+    base_address_text: optionalText(500),
     base_latitude: z.coerce.number().min(-90).max(90).nullable().optional(),
     base_longitude: z.coerce.number().min(-180).max(180).nullable().optional(),
     coverage_radius_km: z.coerce.number().min(1).max(100),
@@ -62,15 +82,27 @@ const vetOnboardingSchema = z.object({
     specialty: z.enum(['medicina_general', 'urgencias', 'exoticos', 'nutricion', 'fisioterapia']),
     offered_services: z.array(z.string().trim().min(1)).min(1, 'offered_services must have at least one item'),
     accepts_emergencies: z.boolean(),
+    home_visit_enabled: z.boolean(),
+    telemedicine_enabled: z.boolean(),
+    emergency_radius_km: z.coerce.number().min(1).max(100).nullable().optional(),
     schedule_json: z.object({
       label: z.string().trim().min(1, 'schedule_json.label is required'),
       base_location_note: z.string().trim().max(500).optional().or(z.literal('')),
     }),
   }),
   vet_finances: z.object({
+    account_holder: z.string().trim().min(2, 'account_holder is required'),
     clabe: z.string().trim().regex(/^\d{18}$/, 'clabe must be 18 digits'),
     bank_name: z.string().trim().min(2, 'bank_name is required'),
     rfc: z.string().trim().max(13).optional().or(z.literal('')),
+  }),
+  vet_store_settings: z.object({
+    store_display_name: z.string().trim().min(2, 'store_display_name is required').max(160),
+    pickup_address_text: optionalText(500),
+    pickup_instructions: optionalText(500),
+    store_contact_phone: optionalText(80),
+    offers_delivery: z.boolean(),
+    offers_pickup: z.boolean(),
   }),
 });
 
