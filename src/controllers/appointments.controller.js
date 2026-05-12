@@ -15,6 +15,7 @@ async function createAppointment(req, res) {
       vet_id,
       visit_latitude: visitLatitude,
       visit_longitude: visitLongitude,
+      visit_address_text: visitAddressText,
     } = req.body;
 
     if (!pet_id || !scheduled_at) {
@@ -62,8 +63,17 @@ async function createAppointment(req, res) {
 
     const lat = visitLatitude != null ? Number(visitLatitude) : null;
     const lng = visitLongitude != null ? Number(visitLongitude) : null;
+    const addressText = typeof visitAddressText === 'string' ? visitAddressText.trim() : '';
+    const clientDetailsPatch = {};
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      await req.supabase.from('client_details').update({ latitude: lat, longitude: lng }).eq('profile_id', ownerId);
+      clientDetailsPatch.latitude = lat;
+      clientDetailsPatch.longitude = lng;
+    }
+    if (addressText) {
+      clientDetailsPatch.address_text = addressText;
+    }
+    if (Object.keys(clientDetailsPatch).length > 0) {
+      await req.supabase.from('client_details').update(clientDetailsPatch).eq('profile_id', ownerId);
     }
 
     return res.status(201).json(data);

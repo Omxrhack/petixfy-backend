@@ -9,6 +9,7 @@ const createAppointmentSchema = z.object({
   vet_id: z.string().uuid().optional().nullable(),
   visit_latitude: z.coerce.number().finite().optional(),
   visit_longitude: z.coerce.number().finite().optional(),
+  visit_address_text: z.string().trim().max(500).optional().nullable(),
 });
 
 const ownerAppointmentStatusSchema = z.object({

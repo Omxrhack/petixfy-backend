@@ -1220,3 +1220,175 @@ ON CONFLICT (reposter_id, original_post_id) DO UPDATE
 SET
   quote_body = EXCLUDED.quote_body,
   created_at = EXCLUDED.created_at;
+
+-- ---------------------------------------------------------------------------
+-- Store catalog and demo orders
+-- ---------------------------------------------------------------------------
+INSERT INTO public.products (
+  id,
+  name,
+  description,
+  category,
+  price,
+  stock
+)
+VALUES
+  (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd01',
+    'Croquetas premium adulto',
+    'Alimento balanceado para perros adultos, bolsa 15 kg.',
+    'alimento',
+    549.00,
+    40
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd02',
+    'Pienso gato adulto',
+    'Receta salmon y arroz, bolsa 8 kg.',
+    'alimento',
+    389.00,
+    27
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd03',
+    'Shampoo hipoalergenico',
+    'Formula suave para piel sensible, 500 ml.',
+    'higiene',
+    149.00,
+    35
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd04',
+    'Correa reflectante',
+    'Correa ajustable con costuras reflectantes.',
+    'accesorios',
+    219.00,
+    18
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd05',
+    'Arena aglomerante',
+    'Arena para gato con control de olor, 10 kg.',
+    'higiene',
+    179.00,
+    22
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd06',
+    'Transportadora mediana',
+    'Transportadora ventilada para perros y gatos medianos.',
+    'accesorios',
+    690.00,
+    9
+  )
+ON CONFLICT (id) DO UPDATE
+SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description,
+  category = EXCLUDED.category,
+  price = EXCLUDED.price,
+  stock = EXCLUDED.stock,
+  updated_at = now();
+
+INSERT INTO public.store_orders (
+  id,
+  owner_id,
+  status,
+  fulfillment_method,
+  delivery_address_text,
+  contact_name,
+  contact_phone,
+  notes,
+  subtotal_mxn,
+  total_mxn,
+  created_at
+)
+VALUES
+  (
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01',
+    '11111111-1111-4111-8111-111111111111',
+    'pending_confirmation',
+    'delivery',
+    'Av. Paseo de la Reforma 222, Juarez, CDMX',
+    'Ana Ramirez',
+    '+52 55 1000 2000',
+    'Entregar por la tarde.',
+    1098.00,
+    1098.00,
+    now() - interval '3 hours'
+  ),
+  (
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02',
+    '22222222-2222-4222-8222-222222222222',
+    'confirmed',
+    'pickup_contact',
+    NULL,
+    'Bruno Salazar',
+    '+52 55 3000 4000',
+    'Contactar por WhatsApp para recoger.',
+    568.00,
+    568.00,
+    now() - interval '1 day'
+  )
+ON CONFLICT (id) DO UPDATE
+SET
+  status = EXCLUDED.status,
+  fulfillment_method = EXCLUDED.fulfillment_method,
+  delivery_address_text = EXCLUDED.delivery_address_text,
+  contact_name = EXCLUDED.contact_name,
+  contact_phone = EXCLUDED.contact_phone,
+  notes = EXCLUDED.notes,
+  subtotal_mxn = EXCLUDED.subtotal_mxn,
+  total_mxn = EXCLUDED.total_mxn,
+  updated_at = now();
+
+INSERT INTO public.store_order_items (
+  id,
+  order_id,
+  product_id,
+  product_name,
+  product_category,
+  unit_price_mxn,
+  quantity,
+  line_total_mxn
+)
+VALUES
+  (
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeef01',
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd01',
+    'Croquetas premium adulto',
+    'alimento',
+    549.00,
+    2,
+    1098.00
+  ),
+  (
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeef02',
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd02',
+    'Pienso gato adulto',
+    'alimento',
+    389.00,
+    1,
+    389.00
+  ),
+  (
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeef03',
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddd05',
+    'Arena aglomerante',
+    'higiene',
+    179.00,
+    1,
+    179.00
+  )
+ON CONFLICT (id) DO UPDATE
+SET
+  order_id = EXCLUDED.order_id,
+  product_id = EXCLUDED.product_id,
+  product_name = EXCLUDED.product_name,
+  product_category = EXCLUDED.product_category,
+  unit_price_mxn = EXCLUDED.unit_price_mxn,
+  quantity = EXCLUDED.quantity,
+  line_total_mxn = EXCLUDED.line_total_mxn;

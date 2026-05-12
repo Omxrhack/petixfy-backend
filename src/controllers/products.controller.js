@@ -72,4 +72,28 @@ async function listProducts(req, res) {
   }
 }
 
-module.exports = { listProducts };
+async function getProduct(req, res) {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabaseAnon
+      .from('products')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    return res.json({ product: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to get product', details: err.message });
+  }
+}
+
+module.exports = { listProducts, getProduct };

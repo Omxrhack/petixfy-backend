@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { createPetSchema, updatePetSchema } = require('../src/schemas/pet.schema');
 const { createAppointmentSchema } = require('../src/schemas/appointment.schema');
+const { createStoreOrderSchema } = require('../src/schemas/store.schema');
 const { createTrackingSessionSchema } = require('../src/schemas/tracking.schema');
 
 test('pet schemas accept full medical payloads', () => {
@@ -50,4 +51,27 @@ test('tracking schema requires exactly one target', () => {
     vet_lng: -99.1,
   });
   assert.equal(bad.success, false);
+});
+
+test('store checkout schema validates fulfillment requirements', () => {
+  const delivery = createStoreOrderSchema.parse({
+    fulfillment_method: 'delivery',
+    delivery_address_text: 'Av. Siempre Viva 123',
+    items: [{ product_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01', quantity: '2' }],
+  });
+
+  assert.equal(delivery.items[0].quantity, 2);
+
+  const missingAddress = createStoreOrderSchema.safeParse({
+    fulfillment_method: 'delivery',
+    items: [{ product_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01', quantity: 1 }],
+  });
+  assert.equal(missingAddress.success, false);
+
+  const pickup = createStoreOrderSchema.safeParse({
+    fulfillment_method: 'pickup_contact',
+    contact_phone: '+52 55 1234 5678',
+    items: [{ product_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01', quantity: 1 }],
+  });
+  assert.equal(pickup.success, true);
 });
