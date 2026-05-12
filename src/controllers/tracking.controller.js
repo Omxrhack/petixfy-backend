@@ -165,6 +165,11 @@ async function getTrackingSession(req, res) {
 
 async function listActiveTrackingSessions(req, res) {
   try {
+    const { role, error: roleError } = await loadProfileRole(req);
+    if (roleError) {
+      return res.status(400).json({ error: roleError.message, details: roleError });
+    }
+
     const { data, error } = await req.supabase
       .from('tracking_sessions')
       .select('*')
@@ -177,6 +182,10 @@ async function listActiveTrackingSessions(req, res) {
 
     const enriched = [];
     for (const session of data ?? []) {
+      if (role === 'vet') {
+        const gate = await assertVetOwnsTrackingSession(req, session.id);
+        if (gate.error || gate.forbidden) continue;
+      }
       const item = await enrichTrackingSession(req, session);
       enriched.push(item);
     }
