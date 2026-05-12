@@ -10,7 +10,6 @@ async function createAppointment(req, res) {
       pet_id,
       scheduled_at,
       notes,
-      status,
       vet_id,
       visit_latitude: visitLatitude,
       visit_longitude: visitLongitude,
@@ -41,7 +40,7 @@ async function createAppointment(req, res) {
       owner_id: ownerId,
       scheduled_at,
       notes: notes ?? null,
-      status: status ?? 'pending',
+      status: 'pending',
     };
 
     if (vet_id) {
@@ -66,6 +65,61 @@ async function createAppointment(req, res) {
     return res.status(201).json(data);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create appointment', details: err.message });
+  }
+}
+
+async function updateMyAppointmentStatus(req, res) {
+  try {
+    const ownerId = req.user.id;
+    const appointmentId = req.params.id;
+    const { status } = req.body;
+
+    const { data: current, error: fetchError } = await req.supabase
+      .from('appointments')
+      .select('id, owner_id, status, scheduled_at')
+      .eq('id', appointmentId)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (fetchError) {
+      return res.status(400).json({ error: fetchError.message, details: fetchError });
+    }
+
+    if (!current) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    if (!['pending', 'confirmed'].includes(current.status)) {
+      return res.status(409).json({ error: 'Only pending or confirmed appointments can be cancelled' });
+    }
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .update({ status })
+      .eq('id', appointmentId)
+      .eq('owner_id', ownerId)
+      .select(
+        'id, vet_id, scheduled_at, status, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
+      )
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.json({
+      appointment: {
+        id: data.id,
+        vet_id: data.vet_id,
+        scheduled_at: data.scheduled_at,
+        status: data.status,
+        notes: data.notes,
+        pet: data.pets,
+        vet: data.vet ?? null,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update appointment', details: err.message });
   }
 }
 
@@ -148,4 +202,4 @@ async function getMyVet(req, res) {
   }
 }
 
-module.exports = { createAppointment, listMyAppointments, getMyVet };
+module.exports = { createAppointment, updateMyAppointmentStatus, listMyAppointments, getMyVet };

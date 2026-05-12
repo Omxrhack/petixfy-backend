@@ -27,10 +27,15 @@ const createVetAppointmentSchema = z.object({
   notes: z.string().trim().max(2000).optional(),
 });
 
+const vetAppointmentStatusSchema = z.object({
+  status: z.enum(['confirmed', 'completed', 'cancelled']),
+});
+
 module.exports = {
   availabilitySchema,
   emergencyRespondSchema,
   scheduleQuerySchema,
   dashboardQuerySchema,
   createVetAppointmentSchema,
+  vetAppointmentStatusSchema,
 };

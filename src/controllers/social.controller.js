@@ -195,6 +195,34 @@ async function getProfile(req, res) {
   }
 }
 
+async function searchProfiles(req, res) {
+  try {
+    const q = req.query.q?.toString().trim() ?? '';
+    const limit = Math.min(30, Math.max(1, parseInt(req.query.limit ?? '20', 10)));
+    if (q.length < 2) {
+      return res.json({ profiles: [] });
+    }
+
+    const me = req.user.id;
+    const service = createSupabaseServiceRoleClient();
+    const pattern = `%${q.replace(/[%_]/g, '\\$&')}%`;
+    const { data, error } = await service
+      .from('profiles')
+      .select('id, full_name, avatar_url, role, bio, location')
+      .neq('id', me)
+      .or(`full_name.ilike.${pattern},bio.ilike.${pattern},location.ilike.${pattern}`)
+      .limit(limit);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.json({ profiles: data ?? [] });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to search profiles', details: err.message });
+  }
+}
+
 // ─── Follows ─────────────────────────────────────────────────────────────────
 
 async function followUser(req, res) {
@@ -422,6 +450,54 @@ async function createRepost(req, res) {
     return res.status(201).json(payload);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to create repost', details: err.message });
+  }
+}
+
+async function deletePost(req, res) {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+    const service = createSupabaseServiceRoleClient();
+
+    const { data: post, error: fetchErr } = await service
+      .from('posts')
+      .select('id, author_id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (fetchErr) {
+      if (_isMissingTable(fetchErr)) return res.status(503).json({ error: 'Posts not available yet' });
+      return res.status(400).json({ error: fetchErr.message });
+    }
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (post.author_id !== userId) return res.status(403).json({ error: 'Only the author can delete this post' });
+
+    const { error } = await service.from('posts').delete().eq('id', postId);
+    if (error) return res.status(400).json({ error: error.message });
+
+    return res.status(204).send();
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to delete post', details: err.message });
+  }
+}
+
+async function reportPost(req, res) {
+  try {
+    const postId = req.params.id;
+    const reason = req.body?.reason?.toString().trim() || 'report';
+    const { data: post, error } = await req.supabase.from('posts').select('id').eq('id', postId).maybeSingle();
+    if (error && !_isMissingTable(error)) return res.status(400).json({ error: error.message });
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    // MVP: acknowledge report for moderation workflows without requiring a new table migration.
+    return res.status(202).json({
+      ok: true,
+      post_id: postId,
+      reason: reason.slice(0, 160),
+      message: 'Reporte recibido para moderacion.',
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to report post', details: err.message });
   }
 }
 
@@ -859,12 +935,15 @@ function _coercePostRow(post) {
 
 module.exports = {
   getProfile,
+  searchProfiles,
   followUser,
   unfollowUser,
   getFeed,
   uploadPostImage,
   createPost,
   createRepost,
+  deletePost,
+  reportPost,
   getUserPosts,
   createReview,
   getProfileReviews,

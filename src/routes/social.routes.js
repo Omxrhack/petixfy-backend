@@ -3,12 +3,15 @@ const { requireAuth } = require('../middleware/requireAuth');
 const { uploadPetPhotoMiddleware } = require('../middleware/uploadPetPhoto');
 const {
   getProfile,
+  searchProfiles,
   followUser,
   unfollowUser,
   getFeed,
   uploadPostImage,
   createPost,
   createRepost,
+  deletePost,
+  reportPost,
   getUserPosts,
   createReview,
   getProfileReviews,
@@ -24,6 +27,7 @@ const router = Router();
 
 // Discover — must be before /profiles/:id to avoid param collision
 router.get('/profiles/suggestions', requireAuth, getSuggestions);
+router.get('/profiles/search', requireAuth, searchProfiles);
 router.get('/posts/explore',        requireAuth, getExplorePosts);
 
 // Public profile (optional auth for is_following)
@@ -43,6 +47,8 @@ router.post('/posts/upload-image', requireAuth, uploadPetPhotoMiddleware, upload
 router.post('/posts/:id/like', requireAuth, togglePostLike);
 router.get('/posts/:id/comments', requireAuth, getPostComments);
 router.post('/posts/:id/comments', requireAuth, createPostComment);
+router.delete('/posts/:id', requireAuth, deletePost);
+router.post('/posts/:id/report', requireAuth, reportPost);
 router.get('/posts', requireAuth, getFeed);
 router.post('/posts', requireAuth, createPost);
 router.post('/posts/:id/repost', requireAuth, createRepost);

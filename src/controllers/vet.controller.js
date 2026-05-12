@@ -510,6 +510,49 @@ async function claimAppointment(req, res) {
   }
 }
 
+async function updateAssignedAppointmentStatus(req, res) {
+  try {
+    const vetId = req.user.id;
+    const appointmentId = req.params.id;
+    const { status } = req.body;
+
+    const { data: current, error: fetchError } = await req.supabase
+      .from('appointments')
+      .select('id, vet_id, status')
+      .eq('id', appointmentId)
+      .eq('vet_id', vetId)
+      .maybeSingle();
+
+    if (fetchError) {
+      return res.status(400).json({ error: fetchError.message, details: fetchError });
+    }
+
+    if (!current) {
+      return res.status(404).json({ error: 'Appointment not found or not assigned to this vet' });
+    }
+
+    if (current.status === 'cancelled') {
+      return res.status(409).json({ error: 'Cancelled appointments cannot be updated' });
+    }
+
+    const { data, error } = await req.supabase
+      .from('appointments')
+      .update({ status })
+      .eq('id', appointmentId)
+      .eq('vet_id', vetId)
+      .select(APPOINTMENT_SELECT_VET)
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    return res.json({ appointment: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update appointment status', details: err.message });
+  }
+}
+
 /** Nueva cita confirmada; insert con service role si hay vinculo con la mascota (cita/emergencia). */
 async function createVetAppointment(req, res) {
   try {
@@ -682,6 +725,34 @@ async function uploadPetPhotoAsVet(req, res) {
   }
 }
 
+async function closeEmergency(req, res) {
+  try {
+    const vetId = req.user.id;
+    const emergencyId = req.params.id;
+
+    const { data, error } = await req.supabase
+      .from('emergencies')
+      .update({ status: 'closed' })
+      .eq('id', emergencyId)
+      .eq('assigned_vet_id', vetId)
+      .in('status', ['open', 'dispatched'])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      return res.status(400).json({ error: error.message, details: error });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Emergency not found or not assigned to this vet' });
+    }
+
+    return res.json({ emergency: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to close emergency', details: err.message });
+  }
+}
+
 module.exports = {
   patchAvailability,
   getDashboard,
@@ -689,7 +760,9 @@ module.exports = {
   getPetSummary,
   listActiveEmergencies,
   respondEmergency,
+  closeEmergency,
   uploadPetPhotoAsVet,
   claimAppointment,
+  updateAssignedAppointmentStatus,
   createVetAppointment,
 };
