@@ -34,7 +34,7 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 const APPOINTMENT_SELECT_VET =
-  'id, vet_id, scheduled_at, status, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
+  'id, vet_id, scheduled_at, status, appointment_type, reason, notes, fee_mxn, owner_id, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)';
 
 /** Calendar day YYYY-MM-DD in America/Mexico_City (dashboard KPIs). */
 function mexicoCalendarDateStr(isoOrMs) {
@@ -205,6 +205,8 @@ async function getDashboard(req, res) {
         vet_avatar_url: a.vet?.avatar_url ?? null,
         scheduled_at: a.scheduled_at,
         status: a.status,
+        appointment_type: a.appointment_type,
+        reason: a.reason,
         pet_name: a.pets?.name ?? '',
         species: a.pets?.species ?? '',
         neighborhood: detailsMap[a.owner_id]?.address_text ?? '',
@@ -276,6 +278,8 @@ async function getSchedule(req, res) {
       vet_id: a.vet_id,
       scheduled_at: a.scheduled_at,
       status: a.status,
+      appointment_type: a.appointment_type,
+      reason: a.reason,
       notes: a.notes,
       fee_mxn: a.fee_mxn,
       owner_id: a.owner_id,

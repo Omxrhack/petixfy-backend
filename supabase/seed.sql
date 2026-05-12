@@ -733,6 +733,8 @@ INSERT INTO public.appointments (
   owner_id,
   scheduled_at,
   status,
+  appointment_type,
+  reason,
   notes,
   vet_id,
   fee_mxn
@@ -744,6 +746,8 @@ VALUES
     '11111111-1111-4111-8111-111111111111',
     now() - interval '9 days',
     'completed',
+    'Vacunacion',
+    'Refuerzo anual',
     'Vacunacion anual y revision general.',
     '55555555-5555-4555-8555-555555555555',
     650.00
@@ -754,6 +758,8 @@ VALUES
     '11111111-1111-4111-8111-111111111111',
     now() + interval '2 days',
     'confirmed',
+    'Nutricion',
+    'Seguimiento digestivo',
     'Revision digestiva y ajuste de alimento.',
     '55555555-5555-4555-8555-555555555555',
     520.00
@@ -764,6 +770,8 @@ VALUES
     '22222222-2222-4222-8222-222222222222',
     now() - interval '4 days',
     'completed',
+    'Curacion',
+    'Lesion en almohadilla',
     'Curacion de almohadilla y control de actividad.',
     '66666666-6666-4666-8666-666666666666',
     780.00
@@ -774,6 +782,8 @@ VALUES
     '33333333-3333-4333-8333-333333333333',
     now() + interval '5 days',
     'pending',
+    'Esterilizacion',
+    'Valoracion prequirurgica',
     'Valoracion para esterilizacion.',
     NULL,
     450.00
@@ -784,6 +794,8 @@ VALUES
     '44444444-4444-4444-8444-444444444444',
     now() + interval '1 day',
     'confirmed',
+    'Dental',
+    'Revision senior',
     'Revision dental senior.',
     '77777777-7777-4777-8777-777777777777',
     700.00
@@ -794,6 +806,8 @@ VALUES
     '44444444-4444-4444-8444-444444444444',
     now() - interval '15 days',
     'completed',
+    'Dental',
+    'Control dental exoticos',
     'Revision dental de conejo y recomendaciones de dieta.',
     '77777777-7777-4777-8777-777777777777',
     620.00
@@ -804,6 +818,8 @@ SET
   owner_id = EXCLUDED.owner_id,
   scheduled_at = EXCLUDED.scheduled_at,
   status = EXCLUDED.status,
+  appointment_type = EXCLUDED.appointment_type,
+  reason = EXCLUDED.reason,
   notes = EXCLUDED.notes,
   vet_id = EXCLUDED.vet_id,
   fee_mxn = EXCLUDED.fee_mxn,

@@ -9,6 +9,8 @@ async function createAppointment(req, res) {
     const {
       pet_id,
       scheduled_at,
+      appointment_type: appointmentType,
+      reason,
       notes,
       vet_id,
       visit_latitude: visitLatitude,
@@ -39,6 +41,8 @@ async function createAppointment(req, res) {
       pet_id,
       owner_id: ownerId,
       scheduled_at,
+      appointment_type: appointmentType ?? null,
+      reason: reason ?? null,
       notes: notes ?? null,
       status: 'pending',
     };
@@ -99,7 +103,7 @@ async function updateMyAppointmentStatus(req, res) {
       .eq('id', appointmentId)
       .eq('owner_id', ownerId)
       .select(
-        'id, vet_id, scheduled_at, status, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
+        'id, vet_id, scheduled_at, status, appointment_type, reason, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
       )
       .single();
 
@@ -113,6 +117,8 @@ async function updateMyAppointmentStatus(req, res) {
         vet_id: data.vet_id,
         scheduled_at: data.scheduled_at,
         status: data.status,
+        appointment_type: data.appointment_type,
+        reason: data.reason,
         notes: data.notes,
         pet: data.pets,
         vet: data.vet ?? null,
@@ -130,7 +136,7 @@ async function listMyAppointments(req, res) {
     const { data, error } = await req.supabase
       .from('appointments')
       .select(
-        'id, vet_id, scheduled_at, status, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
+        'id, vet_id, scheduled_at, status, appointment_type, reason, notes, pet_id, pets(id, name, species, breed, photo_url), vet:profiles!appointments_vet_id_fkey(id, full_name, avatar_url, phone)',
       )
       .eq('owner_id', ownerId)
       .order('scheduled_at', { ascending: true })
@@ -145,6 +151,8 @@ async function listMyAppointments(req, res) {
       vet_id: a.vet_id,
       scheduled_at: a.scheduled_at,
       status: a.status,
+      appointment_type: a.appointment_type,
+      reason: a.reason,
       notes: a.notes,
       pet: a.pets,
       vet: a.vet ?? null,
